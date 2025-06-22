@@ -1,0 +1,68 @@
+import axios from "axios";
+import { Project, Pipeline, Job, Environment, AuthStatus } from "../types";
+
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:3001";
+
+// Create axios instance with credentials
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  withCredentials: true,
+});
+
+// Request interceptor to handle errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Redirect to login if unauthorized
+      window.location.href = "/";
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const authAPI = {
+  getStatus: (): Promise<AuthStatus> =>
+    api.get("/auth/status").then((res) => res.data),
+
+  login: (): void => {
+    window.location.href = `${API_BASE_URL}/auth/gitlab`;
+  },
+
+  logout: (): void => {
+    window.location.href = `${API_BASE_URL}/auth/logout`;
+  },
+};
+
+export const projectsAPI = {
+  getAll: (): Promise<Project[]> =>
+    api.get("/api/projects").then((res) => res.data),
+
+  getPipelines: (projectId: number): Promise<Pipeline[]> =>
+    api.get(`/api/projects/${projectId}/pipelines`).then((res) => res.data),
+
+  getJobs: (projectId: number): Promise<Job[]> =>
+    api.get(`/api/projects/${projectId}/jobs`).then((res) => res.data),
+
+  getEnvironments: (projectId: number): Promise<Environment[]> =>
+    api.get(`/api/projects/${projectId}/environments`).then((res) => res.data),
+
+  triggerPipeline: (
+    projectId: number,
+    ref: string = "main",
+    variables: Record<string, string> = {}
+  ): Promise<Pipeline> =>
+    api
+      .post(`/api/projects/${projectId}/trigger-pipeline`, { ref, variables })
+      .then((res) => res.data),
+
+  stopEnvironment: (
+    projectId: number,
+    environmentId: number
+  ): Promise<Environment> =>
+    api
+      .post(`/api/projects/${projectId}/environments/${environmentId}/stop`)
+      .then((res) => res.data),
+};
+
+export default api;

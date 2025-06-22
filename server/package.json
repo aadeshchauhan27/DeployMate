@@ -1,0 +1,24 @@
+{
+  "name": "deploymate-server",
+  "version": "1.0.0",
+  "description": "Backend server for DeployMate GitLab automation tool",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express-session": "^1.17.3",
+    "passport": "^0.6.0",
+    "passport-gitlab2": "^2.2.0",
+    "axios": "^1.5.0",
+    "helmet": "^7.0.0",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
