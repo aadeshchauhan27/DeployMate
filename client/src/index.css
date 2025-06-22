@@ -56,4 +56,17 @@
   .badge-info {
     @apply badge bg-blue-100 text-blue-800;
   }
+
+  .animate-bounce {
+    animation: bounce 1s infinite alternate;
+  }
+
+  @keyframes bounce {
+    0% {
+      transform: translateY(0);
+    }
+    100% {
+      transform: translateY(-0.5rem);
+    }
+  }
 }

@@ -10,6 +10,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { PipelinesDashboardPage } from "./pages/PipelinesDashboardPage";
 import { LoadingSpinner } from "./components/LoadingSpinner";
+import { ProjectDetailPage } from "./pages/ProjectDetailPage";
+import { GroupsPage } from "./pages/GroupsPage";
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -59,6 +61,22 @@ const AppRoutes: React.FC = () => {
         element={
           <ProtectedRoute>
             <PipelinesDashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/projects/:projectId"
+        element={
+          <ProtectedRoute>
+            <ProjectDetailPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/groups"
+        element={
+          <ProtectedRoute>
+            <GroupsPage />
           </ProtectedRoute>
         }
       />

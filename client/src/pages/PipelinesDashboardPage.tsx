@@ -7,18 +7,23 @@ import {
   Filter,
   Search,
   AlertCircle,
+  Home,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { projectsAPI } from "../services/api";
 import { Project, Pipeline } from "../types";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { StatusBadge } from "../components/StatusBadge";
+import { PipelinesList } from "../components/PipelinesList";
+import { AppHeader } from "../components/AppHeader";
 
 export const PipelinesDashboardPage: React.FC = () => {
   const { user, logout } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [allPipelines, setAllPipelines] = useState<Pipeline[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pipelinesLoading, setPipelinesLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [retryingPipelines, setRetryingPipelines] = useState<Set<number>>(
@@ -27,12 +32,23 @@ export const PipelinesDashboardPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadAllPipelines();
+    loadAllPipelines(true);
   }, []);
 
-  const loadAllPipelines = async () => {
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadAllPipelines(false);
+    }, 15000); // 15 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  const loadAllPipelines = async (isInitial = false) => {
     try {
-      setLoading(true);
+      if (isInitial) {
+        setLoading(true);
+      } else {
+        setPipelinesLoading(true);
+      }
       setError(null);
 
       // Get all projects
@@ -72,7 +88,11 @@ export const PipelinesDashboardPage: React.FC = () => {
       console.error("Failed to load pipelines:", error);
       setError("Failed to load pipelines. Please try again.");
     } finally {
-      setLoading(false);
+      if (isInitial) {
+        setLoading(false);
+      } else {
+        setPipelinesLoading(false);
+      }
     }
   };
 
@@ -170,35 +190,7 @@ export const PipelinesDashboardPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Gitlab className="w-8 h-8 text-primary-600" />
-                <h1 className="text-xl font-bold text-gray-900">DeployMate</h1>
-              </div>
-              <span className="text-gray-400">|</span>
-              <span className="text-lg font-medium text-gray-700">
-                Pipelines Dashboard
-              </span>
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2 text-sm text-gray-600">
-                <span>Welcome,</span>
-                <span className="font-medium text-gray-900">
-                  {user?.username}
-                </span>
-              </div>
-              <button onClick={logout} className="btn-secondary text-sm">
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+      <AppHeader />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Error Message */}
@@ -296,7 +288,7 @@ export const PipelinesDashboardPage: React.FC = () => {
             </select>
 
             <button
-              onClick={loadAllPipelines}
+              onClick={() => loadAllPipelines(false)}
               className="btn-secondary flex items-center space-x-2"
             >
               <RefreshCw className="w-4 h-4" />
@@ -306,113 +298,13 @@ export const PipelinesDashboardPage: React.FC = () => {
         </div>
 
         {/* Pipelines List */}
-        <div className="card">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">
-              All Pipelines
-            </h2>
-            <span className="text-sm text-gray-500">
-              {filteredPipelines.length} pipelines
-            </span>
-          </div>
-
-          <div className="space-y-4">
-            {filteredPipelines.map((pipeline) => (
-              <div
-                key={`${pipeline.project_id}-${pipeline.id}`}
-                className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3 mb-2">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium text-gray-900">
-                          #{pipeline.iid}
-                        </span>
-                        <StatusBadge status={pipeline.status} />
-                      </div>
-                      <span className="text-gray-400">|</span>
-                      <span className="font-medium text-gray-900">
-                        {pipeline.project_name}
-                      </span>
-                      <span className="text-sm text-gray-500">
-                        ({pipeline.project_path})
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                      <div>
-                        <span className="font-medium">Branch:</span>{" "}
-                        {pipeline.ref}
-                      </div>
-                      <div>
-                        <span className="font-medium">Commit:</span>{" "}
-                        {pipeline.sha.substring(0, 8)}
-                      </div>
-                      <div>
-                        <span className="font-medium">Started:</span>{" "}
-                        {new Date(pipeline.created_at).toLocaleString()}
-                      </div>
-                      <div>
-                        <span className="font-medium">Duration:</span>{" "}
-                        {pipeline.duration ? `${pipeline.duration}s` : "N/A"}
-                      </div>
-                    </div>
-
-                    {pipeline.user && (
-                      <div className="mt-2 text-sm text-gray-500">
-                        <span className="font-medium">Triggered by:</span>{" "}
-                        {pipeline.user.name} ({pipeline.user.username})
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col space-y-2 ml-4">
-                    {pipeline.status === "failed" && (
-                      <button
-                        onClick={() => handleRetryPipeline(pipeline)}
-                        disabled={retryingPipelines.has(pipeline.id)}
-                        className={`btn-primary text-sm flex items-center space-x-2 ${
-                          retryingPipelines.has(pipeline.id)
-                            ? "opacity-50 cursor-not-allowed"
-                            : ""
-                        }`}
-                      >
-                        {retryingPipelines.has(pipeline.id) ? (
-                          <>
-                            <LoadingSpinner size="sm" />
-                            <span>Retrying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <RotateCcw className="w-4 h-4" />
-                            <span>Retry</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-
-                    <a
-                      href={pipeline.web_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn-secondary text-sm flex items-center space-x-2"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      <span>View</span>
-                    </a>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {filteredPipelines.length === 0 && (
-            <div className="text-center py-8">
-              <p className="text-gray-500">No pipelines found</p>
-            </div>
-          )}
-        </div>
+        <PipelinesList
+          pipelines={filteredPipelines}
+          loading={pipelinesLoading}
+          retryingPipelines={retryingPipelines}
+          handleRetryPipeline={handleRetryPipeline}
+          error={error}
+        />
       </div>
     </div>
   );

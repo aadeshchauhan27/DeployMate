@@ -47,6 +47,9 @@ export const projectsAPI = {
   getEnvironments: (projectId: number): Promise<Environment[]> =>
     api.get(`/api/projects/${projectId}/environments`).then((res) => res.data),
 
+  getBranches: (projectId: number): Promise<any[]> =>
+    api.get(`/api/projects/${projectId}/branches`).then((res) => res.data),
+
   triggerPipeline: (
     projectId: number,
     ref: string = "main",
@@ -63,6 +66,9 @@ export const projectsAPI = {
     api
       .post(`/api/projects/${projectId}/environments/${environmentId}/stop`)
       .then((res) => res.data),
+
+  getById: (projectId: number): Promise<Project> =>
+    api.get(`/api/projects/${projectId}`).then((res) => res.data),
 };
 
 export default api;

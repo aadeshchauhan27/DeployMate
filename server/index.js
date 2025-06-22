@@ -6,10 +6,14 @@ const GitlabStrategy = require("passport-gitlab2").Strategy;
 const axios = require("axios");
 const helmet = require("helmet");
 const morgan = require("morgan");
+const fs = require("fs");
+const path = require("path");
 require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+const GROUPS_FILE = path.join(__dirname, "../client/public/groups.json");
 
 // Middleware
 app.use(helmet());
@@ -448,6 +452,123 @@ app.post(
   }
 );
 
+app.post(
+  "/api/projects/:id/branches/release",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const projectId = req.params.id;
+      const { releaseNumber } = req.body;
+      if (!releaseNumber) {
+        return res.status(400).json({ error: "releaseNumber is required" });
+      }
+      // Fetch project to get default branch
+      const projectResponse = await axios.get(
+        `${process.env.GITLAB_URL}/api/v4/projects/${projectId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${req.user.accessToken}`,
+          },
+        }
+      );
+      const project = projectResponse.data;
+      const defaultBranch = project.default_branch;
+      const newBranchName = `release/${releaseNumber}`;
+      // Create the new branch from default branch
+      const branchResponse = await axios.post(
+        `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/repository/branches`,
+        null,
+        {
+          params: {
+            branch: newBranchName,
+            ref: defaultBranch,
+          },
+          headers: {
+            Authorization: `Bearer ${req.user.accessToken}`,
+          },
+        }
+      );
+
+      // Copy .gitlab-ci.yml from default branch to new release branch
+      try {
+        // 1. Get the .gitlab-ci.yml content from the default branch
+        const ciFileResponse = await axios.get(
+          `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/repository/files/.gitlab-ci.yml/raw`,
+          {
+            headers: {
+              Authorization: `Bearer ${req.user.accessToken}`,
+            },
+            params: {
+              ref: defaultBranch,
+            },
+          }
+        );
+        const ciFileContent = ciFileResponse.data;
+
+        // 2. Create or update .gitlab-ci.yml in the new branch
+        await axios.post(
+          `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/repository/files/.gitlab-ci.yml`,
+          {
+            branch: newBranchName,
+            content: ciFileContent,
+            commit_message: "Add .gitlab-ci.yml to release branch",
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${req.user.accessToken}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      } catch (ciError) {
+        console.error(
+          "Error copying .gitlab-ci.yml to release branch:",
+          ciError.response?.data || ciError.message
+        );
+        // Optionally, you can return an error or continue
+      }
+
+      res.json({
+        message: `Branch ${newBranchName} created successfully`,
+        branch: branchResponse.data,
+        web_url: `${project.web_url}/-/tree/${encodeURIComponent(
+          newBranchName
+        )}`,
+      });
+    } catch (error) {
+      console.error(
+        "Error creating release branch:",
+        error.response?.data || error.message
+      );
+      res.status(500).json({
+        error: "Failed to create release branch",
+        details: error.response?.data || error.message,
+      });
+    }
+  }
+);
+
+// Add this after other /api/projects/:id endpoints
+app.get("/api/projects/:id/branches", requireAuth, async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}/repository/branches`,
+      {
+        headers: {
+          Authorization: `Bearer ${req.user.accessToken}`,
+        },
+      }
+    );
+    res.json(response.data);
+  } catch (error) {
+    console.error(
+      "Error fetching branches:",
+      error.response?.data || error.message
+    );
+    res.status(500).json({ error: "Failed to fetch branches" });
+  }
+});
+
 // Health check
 app.get("/health", (req, res) => {
   res.json({ status: "OK", timestamp: new Date().toISOString() });
@@ -457,6 +578,46 @@ app.get("/health", (req, res) => {
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ error: "Something went wrong!" });
+});
+
+app.get("/api/projects/:id", requireAuth, async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}`,
+      {
+        headers: {
+          Authorization: `Bearer ${req.user.accessToken}`,
+        },
+      }
+    );
+    res.json(response.data);
+  } catch (error) {
+    console.error(
+      "Error fetching project:",
+      error.response?.data || error.message
+    );
+    res.status(500).json({ error: "Failed to fetch project" });
+  }
+});
+
+// Get groups
+app.get("/api/groups", (req, res) => {
+  fs.readFile(GROUPS_FILE, "utf8", (err, data) => {
+    if (err) return res.json([]);
+    try {
+      res.json(JSON.parse(data));
+    } catch {
+      res.json([]);
+    }
+  });
+});
+
+// Save groups
+app.post("/api/groups", express.json(), (req, res) => {
+  fs.writeFile(GROUPS_FILE, JSON.stringify(req.body, null, 2), (err) => {
+    if (err) return res.status(500).json({ error: "Failed to save groups" });
+    res.json({ success: true });
+  });
 });
 
 app.listen(PORT, () => {

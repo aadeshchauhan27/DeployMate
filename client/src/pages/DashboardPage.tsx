@@ -14,6 +14,8 @@ import { Project, Pipeline } from "../types";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { StatusBadge } from "../components/StatusBadge";
 import { Link } from "react-router-dom";
+import { Message } from "../components/Message";
+import { AppHeader } from "../components/AppHeader";
 
 export const DashboardPage: React.FC = () => {
   const { user, logout } = useAuth();
@@ -27,6 +29,10 @@ export const DashboardPage: React.FC = () => {
   );
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  const [message, setMessage] = useState<{
+    type: "success" | "error" | "info";
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     loadData();
@@ -65,9 +71,10 @@ export const DashboardPage: React.FC = () => {
       const result = await response.json();
 
       if (result.success) {
-        alert(
-          `✅ GitLab API Test Successful!\n\nUser: ${result.user.username}\nProjects found: ${result.projectsCount}\n\nYou should be able to deploy now!`
-        );
+        setMessage({
+          type: "success",
+          text: `✅ GitLab API Test Successful! User: ${result.user.username} Projects found: ${result.projectsCount} You should be able to deploy now!`,
+        });
       } else {
         throw new Error(result.message || "Test failed");
       }
@@ -75,9 +82,10 @@ export const DashboardPage: React.FC = () => {
       console.error("GitLab API test failed:", error);
       const errorMessage = error.message || "Unknown error occurred";
       setError(`GitLab API test failed: ${errorMessage}`);
-      alert(
-        `❌ GitLab API Test Failed:\n\n${errorMessage}\n\nThis might be why deployments aren't working.`
-      );
+      setMessage({
+        type: "error",
+        text: `❌ GitLab API Test Failed: ${errorMessage} This might be why deployments aren't working.`,
+      });
     } finally {
       setTesting(false);
     }
@@ -103,9 +111,10 @@ export const DashboardPage: React.FC = () => {
       console.log("✅ Deployment successful:", result);
 
       // Show success message
-      alert(
-        `Pipeline triggered successfully!\nPipeline ID: ${result.id}\nView it at: ${result.web_url}`
-      );
+      setMessage({
+        type: "success",
+        text: `Pipeline triggered successfully! Pipeline ID: ${result.id} View it at: ${result.web_url}`,
+      });
 
       // Refresh data after deployment
       await loadData();
@@ -120,7 +129,10 @@ export const DashboardPage: React.FC = () => {
       setError(`Failed to deploy ${project.name}: ${errorMessage}`);
 
       // Show detailed error to user
-      alert(`Deployment failed for ${project.name}:\n\n${errorMessage}`);
+      setMessage({
+        type: "error",
+        text: `Deployment failed for ${project.name}: ${errorMessage}`,
+      });
     } finally {
       setDeployingProjects((prev) => {
         const newSet = new Set(prev);
@@ -140,43 +152,14 @@ export const DashboardPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <Gitlab className="w-8 h-8 text-primary-600" />
-                <h1 className="text-xl font-bold text-gray-900">DeployMate</h1>
-              </div>
-              <span className="text-gray-400">|</span>
-              <span className="text-lg font-medium text-gray-700">
-                Projects Dashboard
-              </span>
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <Link
-                to="/pipelines"
-                className="btn-secondary text-sm flex items-center space-x-2"
-              >
-                <BarChart3 className="w-4 h-4" />
-                <span>All Pipelines</span>
-              </Link>
-              <div className="flex items-center space-x-2 text-sm text-gray-600">
-                <span>Welcome,</span>
-                <span className="font-medium text-gray-900">
-                  {user?.username}
-                </span>
-              </div>
-              <button onClick={logout} className="btn-secondary text-sm">
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
+      <AppHeader />
+      {message && (
+        <Message
+          type={message.type}
+          message={message.text}
+          onClose={() => setMessage(null)}
+        />
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Error Message */}
         {error && (
@@ -258,9 +241,11 @@ export const DashboardPage: React.FC = () => {
 
               <div className="space-y-4">
                 {filteredProjects.map((project) => (
-                  <div
+                  <Link
                     key={project.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                    to={`/projects/${project.id}`}
+                    className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow block focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    style={{ textDecoration: "none" }}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
@@ -297,98 +282,21 @@ export const DashboardPage: React.FC = () => {
                           </span>
                         </div>
                       </div>
-
                       <div className="flex flex-col space-y-2">
-                        <button
-                          onClick={() => handleDeploy(project)}
-                          disabled={deployingProjects.has(project.id)}
-                          className={`btn-primary text-sm flex items-center space-x-2 ${
-                            deployingProjects.has(project.id)
-                              ? "opacity-50 cursor-not-allowed"
-                              : ""
-                          }`}
-                        >
-                          {deployingProjects.has(project.id) ? (
-                            <>
-                              <LoadingSpinner size="sm" />
-                              <span>Deploying...</span>
-                            </>
-                          ) : (
-                            <>
-                              <span>Deploy</span>
-                            </>
-                          )}
-                        </button>
                         <a
                           href={project.web_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="btn-secondary text-sm"
+                          className="btn-secondary text-sm text-center flex items-center justify-center space-x-2"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          View
+                          <Gitlab className="w-4 h-4" />
                         </a>
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
-
-              {filteredProjects.length === 0 && (
-                <div className="text-center py-8">
-                  <p className="text-gray-500">No projects found</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="lg:col-span-1">
-            <div className="card">
-              <h2 className="text-xl font-semibold text-gray-900 mb-6">
-                Recent Pipelines
-              </h2>
-
-              <div className="space-y-4">
-                {recentPipelines.slice(0, 5).map((pipeline) => (
-                  <div
-                    key={pipeline.id}
-                    className="border border-gray-200 rounded-lg p-3"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-900">
-                        #{pipeline.iid}
-                      </span>
-                      <StatusBadge status={pipeline.status} />
-                    </div>
-
-                    <div className="text-xs text-gray-500 space-y-1">
-                      <div>Branch: {pipeline.ref}</div>
-                      <div>Commit: {pipeline.sha.substring(0, 8)}</div>
-                      <div>
-                        Started:{" "}
-                        {new Date(pipeline.created_at).toLocaleString()}
-                      </div>
-                    </div>
-
-                    <div className="mt-3">
-                      <a
-                        href={pipeline.web_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-primary-600 hover:text-primary-700"
-                      >
-                        View Details →
-                      </a>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {recentPipelines.length === 0 && (
-                <div className="text-center py-8">
-                  <p className="text-gray-500">No recent pipelines</p>
-                </div>
-              )}
             </div>
           </div>
         </div>

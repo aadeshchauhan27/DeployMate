@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   Gitlab,
@@ -14,6 +14,8 @@ import { projectsAPI } from "../services/api";
 import { Project, Pipeline, Job, Environment } from "../types";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { StatusBadge } from "../components/StatusBadge";
+import { Message } from "../components/Message";
+import { AppHeader } from "../components/AppHeader";
 
 export const ProjectDetailPage: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
@@ -26,10 +28,25 @@ export const ProjectDetailPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<
     "pipelines" | "jobs" | "environments"
   >("pipelines");
+  const navigate = useNavigate();
+  const [branches, setBranches] = useState<any[]>([]);
+  const [showReleaseModal, setShowReleaseModal] = useState(false);
+  const [releaseBranchName, setReleaseBranchName] = useState("");
+  const [sourceBranch, setSourceBranch] = useState("");
+  const [creatingRelease, setCreatingRelease] = useState(false);
+  const [selectedDeployBranch, setSelectedDeployBranch] = useState("");
+  const [message, setMessage] = useState<{
+    type: "success" | "error" | "info";
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     if (projectId) {
       loadProjectData();
+      projectsAPI.getBranches(parseInt(projectId)).then((branches) => {
+        setBranches(branches);
+        if (branches.length > 0) setSelectedDeployBranch(branches[0].name);
+      });
     }
   }, [projectId]);
 
@@ -38,12 +55,14 @@ export const ProjectDetailPage: React.FC = () => {
 
     try {
       setLoading(true);
-      const [pipelinesData, jobsData, environmentsData] = await Promise.all([
-        projectsAPI.getPipelines(parseInt(projectId)),
-        projectsAPI.getJobs(parseInt(projectId)),
-        projectsAPI.getEnvironments(parseInt(projectId)),
-      ]);
-
+      const [projectData, pipelinesData, jobsData, environmentsData] =
+        await Promise.all([
+          projectsAPI.getById(parseInt(projectId)),
+          projectsAPI.getPipelines(parseInt(projectId)),
+          projectsAPI.getJobs(parseInt(projectId)),
+          projectsAPI.getEnvironments(parseInt(projectId)),
+        ]);
+      setProject(projectData);
       setPipelines(pipelinesData);
       setJobs(jobsData);
       setEnvironments(environmentsData);
@@ -56,10 +75,14 @@ export const ProjectDetailPage: React.FC = () => {
 
   const handleDeploy = async () => {
     if (!projectId) return;
-
     try {
-      await projectsAPI.triggerPipeline(parseInt(projectId));
-      loadProjectData(); // Refresh data
+      await projectsAPI.triggerPipeline(
+        parseInt(projectId),
+        selectedDeployBranch
+      );
+      setTimeout(() => {
+        navigate("/pipelines");
+      }, 1500);
     } catch (error) {
       console.error("Failed to trigger deployment:", error);
     }
@@ -76,6 +99,61 @@ export const ProjectDetailPage: React.FC = () => {
     }
   };
 
+  const handleOpenReleaseModal = () => {
+    setReleaseBranchName("");
+    setSourceBranch(branches[0]?.name || "");
+    setShowReleaseModal(true);
+  };
+
+  const handleCloseReleaseModal = () => {
+    setShowReleaseModal(false);
+  };
+
+  const handleCreateReleaseBranchModal = async () => {
+    if (!releaseBranchName || !sourceBranch) {
+      setMessage({
+        type: "error",
+        text: "Please enter a release branch name and select a source branch.",
+      });
+      return;
+    }
+    setCreatingRelease(true);
+    try {
+      const res = await fetch(
+        `http://localhost:3001/api/projects/${projectId}/branches/release`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            releaseNumber: releaseBranchName,
+            ref: sourceBranch,
+          }),
+        }
+      );
+      if (!res.ok) throw new Error("Failed to create release branch");
+      const data = await res.json();
+      setMessage({
+        type: "success",
+        text: `Release branch created! View: ${data.web_url}`,
+      });
+      setShowReleaseModal(false);
+      // Refetch branches and select the new branch
+      const updatedBranches = await projectsAPI.getBranches(
+        parseInt(String(projectId))
+      );
+      setBranches(updatedBranches);
+      setSelectedDeployBranch(String(releaseBranchName || ""));
+    } catch (err: any) {
+      setMessage({
+        type: "error",
+        text: err.message || "Failed to create release branch",
+      });
+    } finally {
+      setCreatingRelease(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -86,41 +164,20 @@ export const ProjectDetailPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
-              <Link
-                to="/dashboard"
-                className="flex items-center space-x-2 text-gray-600 hover:text-gray-900"
-              >
-                <ArrowLeft className="w-5 h-5" />
-                <span>Back to Dashboard</span>
-              </Link>
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2 text-sm text-gray-600">
-                <span>Welcome,</span>
-                <span className="font-medium text-gray-900">
-                  {user?.username}
-                </span>
-              </div>
-              <button onClick={logout} className="btn-secondary text-sm">
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
-
+      <AppHeader />
+      {message && (
+        <Message
+          type={message.type}
+          message={message.text}
+          onClose={() => setMessage(null)}
+        />
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Project Info */}
         {project && (
           <div className="card mb-8">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center space-x-4">
+            <div className="flex items-start justify-between flex-wrap">
+              <div className="flex items-center space-x-4 flex-1 min-w-0">
                 {project.avatar_url && (
                   <img
                     src={project.avatar_url}
@@ -128,35 +185,55 @@ export const ProjectDetailPage: React.FC = () => {
                     className="w-16 h-16 rounded-lg"
                   />
                 )}
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-bold text-gray-900 truncate">
                     {project.name}
                   </h1>
-                  <p className="text-gray-600">{project.name_with_namespace}</p>
+                  <p className="text-gray-600 truncate">
+                    {project.name_with_namespace}
+                  </p>
                   {project.description && (
-                    <p className="text-gray-600 mt-2">{project.description}</p>
+                    <p className="text-gray-600 mt-2 truncate">
+                      {project.description}
+                    </p>
                   )}
                 </div>
               </div>
-
-              <div className="flex space-x-3">
-                <button
-                  onClick={handleDeploy}
-                  className="btn-primary flex items-center space-x-2"
+            </div>
+            {/* Action Buttons Row */}
+            <div className="flex flex-wrap gap-3 mt-4 items-center">
+              <div>
+                <select
+                  className="input"
+                  value={selectedDeployBranch}
+                  onChange={(e) => setSelectedDeployBranch(e.target.value)}
                 >
-                  <Play className="w-4 h-4" />
-                  <span>Deploy</span>
-                </button>
-                <a
-                  href={project.web_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-secondary flex items-center space-x-2"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  <span>View in GitLab</span>
-                </a>
+                  {branches.map((branch) => (
+                    <option key={branch.name} value={branch.name}>
+                      {branch.name}
+                    </option>
+                  ))}
+                </select>
               </div>
+              <button
+                onClick={handleDeploy}
+                className="btn-primary flex items-center space-x-2"
+              >
+                <Play className="w-4 h-4" />
+                <span>Deploy</span>
+              </button>
+              <button onClick={handleOpenReleaseModal} className="btn-primary">
+                Create Release Branch
+              </button>
+              <a
+                href={project.web_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-secondary flex items-center space-x-2"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>View in GitLab</span>
+              </a>
             </div>
           </div>
         )}
@@ -220,11 +297,25 @@ export const ProjectDetailPage: React.FC = () => {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
                     <div>
                       <span className="font-medium">Branch:</span>{" "}
-                      {pipeline.ref}
+                      <a
+                        href={`${project?.web_url}/-/tree/${pipeline.ref}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-600 hover:text-primary-700 underline"
+                      >
+                        {pipeline.ref}
+                      </a>
                     </div>
                     <div>
                       <span className="font-medium">Commit:</span>{" "}
-                      {pipeline.sha.substring(0, 8)}
+                      <a
+                        href={`${project?.web_url}/-/commit/${pipeline.sha}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-600 hover:text-primary-700 underline"
+                      >
+                        {pipeline.sha.substring(0, 8)}
+                      </a>
                     </div>
                     <div>
                       <span className="font-medium">Started:</span>{" "}
@@ -367,6 +458,57 @@ export const ProjectDetailPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Modal for creating release branch */}
+      {showReleaseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <h2 className="text-xl font-bold mb-4">Create Release Branch</h2>
+            <div className="mb-4">
+              <label className="block mb-1 font-medium">Source Branch</label>
+              <select
+                className="input"
+                value={sourceBranch}
+                onChange={(e) => setSourceBranch(e.target.value)}
+              >
+                {branches.map((branch) => (
+                  <option key={branch.name} value={branch.name}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mb-4">
+              <label className="block mb-1 font-medium">
+                Release Branch Name
+              </label>
+              <input
+                className="input"
+                type="text"
+                placeholder="e.g. release/1.0.0"
+                value={releaseBranchName}
+                onChange={(e) => setReleaseBranchName(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end space-x-2">
+              <button
+                className="btn-secondary"
+                onClick={handleCloseReleaseModal}
+                disabled={creatingRelease}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleCreateReleaseBranchModal}
+                disabled={creatingRelease}
+              >
+                {creatingRelease ? "Creating..." : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
