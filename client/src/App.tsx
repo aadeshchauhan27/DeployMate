@@ -11,7 +11,9 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { PipelinesDashboardPage } from "./pages/PipelinesDashboardPage";
 import { LoadingSpinner } from "./components/LoadingSpinner";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
-import { GroupsPage } from "./pages/GroupsPage";
+import { GroupManagementPage } from "./pages/GroupManagementPage";
+import { BulkReleasePage } from "./pages/BulkReleasePage";
+import { BulkDeployPage } from "./pages/BulkDeployPage";
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -73,10 +75,26 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
-        path="/groups"
+        path="/group-management"
         element={
           <ProtectedRoute>
-            <GroupsPage />
+            <GroupManagementPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/bulk-release"
+        element={
+          <ProtectedRoute>
+            <BulkReleasePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/bulk-deploy"
+        element={
+          <ProtectedRoute>
+            <BulkDeployPage />
           </ProtectedRoute>
         }
       />

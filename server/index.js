@@ -14,6 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const GROUPS_FILE = path.join(__dirname, "../client/public/groups.json");
+const BULK_DEPLOY_HISTORY_PATH = path.join(__dirname, 'bulk_deploy_history.json');
 
 // Middleware
 app.use(helmet());
@@ -72,7 +73,7 @@ passport.use(
         process.env.GITLAB_REDIRECT_URI ||
         "http://localhost:3001/auth/gitlab/callback",
       scope: "read_user read_api api",
-      baseURL: "https://git.hilti.com"
+      baseURL: process.env.GITLAB_BASE_URL,
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -216,7 +217,7 @@ app.get("/api/projects", requireAuth, async (req, res) => {
         params: {
           membership: true,
           per_page: 100,
-          search: "Decking",
+          //search: "Decking",
         },
       }
     );
@@ -232,6 +233,7 @@ app.get("/api/projects", requireAuth, async (req, res) => {
 
 app.get("/api/projects/:id/pipelines", requireAuth, async (req, res) => {
   try {
+    // Fetch the list of pipelines
     const response = await axios.get(
       `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/pipelines`,
       {
@@ -243,7 +245,30 @@ app.get("/api/projects/:id/pipelines", requireAuth, async (req, res) => {
         },
       }
     );
-    res.json(response.data);
+    const pipelines = response.data;
+
+    // Fetch variables for each pipeline (in parallel)
+    const pipelinesWithVars = await Promise.all(
+      pipelines.map(async (pipeline) => {
+        try {
+          const detailsRes = await axios.get(
+            `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/pipelines/${pipeline.id}`,
+            {
+              headers: {
+                Authorization: `Bearer ${req.user.accessToken}`,
+              },
+            }
+          );
+          // Attach variables (if any)
+          return { ...pipeline, variables: detailsRes.data.variables || [] };
+        } catch (err) {
+          // If error, just return pipeline without variables
+          return { ...pipeline, variables: [] };
+        }
+      })
+    );
+
+    res.json(pipelinesWithVars);
   } catch (error) {
     console.error(
       "Error fetching pipelines:",
@@ -335,6 +360,12 @@ app.post(
         `🔑 Using access token: ${req.user.accessToken.substring(0, 10)}...`
       );
 
+      // Validate variables
+      if (typeof variables !== "object" || Array.isArray(variables)) {
+        console.error("❌ Variables must be an object. Received:", variables);
+        return res.status(400).json({ error: "Variables must be an object." });
+      }
+
       // First, let's check if the project exists and get its default branch
       try {
         const projectResponse = await axios.get(
@@ -378,24 +409,13 @@ app.post(
         res.json(response.data);
       } catch (projectError) {
         console.error(
-          "❌ Error fetching project details:",
+          "❌ Error fetching project details or triggering pipeline:",
           projectError.response?.data || projectError.message
         );
-
-        // Check if it's a scope issue
-        if (projectError.response?.data?.error === "insufficient_scope") {
-          res.status(500).json({
-            error: "Insufficient OAuth scopes",
-            details:
-              "Your GitLab OAuth app needs additional scopes. Please update it to include: read_user, read_api, read_repository, write_repository, api",
-            scopeIssue: true,
-          });
-        } else {
-          res.status(500).json({
-            error: "Failed to fetch project details",
-            details: projectError.response?.data || projectError.message,
-          });
-        }
+        res.status(500).json({
+          error: "Failed to fetch project details or trigger pipeline",
+          details: projectError.response?.data || projectError.message,
+        });
       }
     } catch (error) {
       console.error(
@@ -622,6 +642,45 @@ app.post("/api/groups", express.json(), (req, res) => {
     if (err) return res.status(500).json({ error: "Failed to save groups" });
     res.json({ success: true });
   });
+});
+
+function readBulkDeployHistory() {
+  try {
+    if (!fs.existsSync(BULK_DEPLOY_HISTORY_PATH)) return [];
+    const data = fs.readFileSync(BULK_DEPLOY_HISTORY_PATH, 'utf-8');
+    return JSON.parse(data);
+  } catch (e) {
+    return [];
+  }
+}
+
+function writeBulkDeployHistory(history) {
+  fs.writeFileSync(BULK_DEPLOY_HISTORY_PATH, JSON.stringify(history, null, 2));
+}
+
+// Endpoint to get bulk deployment history
+app.get('/api/bulk-deployments', requireAuth, (req, res) => {
+  const history = readBulkDeployHistory();
+  res.json(history);
+});
+
+// Endpoint to record a bulk deployment
+app.post('/api/bulk-deployments', requireAuth, (req, res) => {
+  const { module, branch, started, environments } = req.body;
+  if (!module || !branch || !started) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  const history = readBulkDeployHistory();
+  const record = {
+    id: Date.now(),
+    module,
+    branch,
+    started,
+    environments: environments || { QA: 'idle', Stage: 'idle', Production: 'idle', Develop: 'idle' },
+  };
+  history.unshift(record);
+  writeBulkDeployHistory(history);
+  res.json({ success: true, record });
 });
 
 app.listen(PORT, () => {

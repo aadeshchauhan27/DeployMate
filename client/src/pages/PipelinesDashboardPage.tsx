@@ -18,6 +18,15 @@ import { StatusBadge } from "../components/StatusBadge";
 import { PipelinesList } from "../components/PipelinesList";
 import { AppHeader } from "../components/AppHeader";
 
+interface ProjectGroup {
+  id: number;
+  name: string;
+  description?: string;
+  projectIds: number[];
+}
+
+const GROUPS_STORAGE_URL = "http://localhost:3001/api/groups";
+
 export const PipelinesDashboardPage: React.FC = () => {
   const { user, logout } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -30,9 +39,19 @@ export const PipelinesDashboardPage: React.FC = () => {
     new Set()
   );
   const [error, setError] = useState<string | null>(null);
+  const [groups, setGroups] = useState<ProjectGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
+  const [groupFilter, setGroupFilter] = useState<string>("all");
 
   useEffect(() => {
     loadAllPipelines(true);
+    // Load groups
+    setGroupsLoading(true);
+    fetch(GROUPS_STORAGE_URL)
+      .then((res) => res.json())
+      .then((data) => setGroups(data))
+      .catch(() => setGroups([]))
+      .finally(() => setGroupsLoading(false));
   }, []);
 
   useEffect(() => {
@@ -159,7 +178,14 @@ export const PipelinesDashboardPage: React.FC = () => {
     const matchesStatus =
       statusFilter === "all" || pipeline.status === statusFilter;
 
-    return matchesSearch && matchesStatus;
+    const matchesGroup =
+      groupFilter === "all" ||
+      (pipeline.project_id &&
+        groups.some(
+          (g) => g.id.toString() === groupFilter && g.projectIds.includes(pipeline.project_id)
+        ));
+
+    return matchesSearch && matchesStatus && matchesGroup;
   });
 
   const getStatusCounts = () => {
@@ -180,7 +206,18 @@ export const PipelinesDashboardPage: React.FC = () => {
 
   const statusCounts = getStatusCounts();
 
-  if (loading) {
+  // Map project_id to group name
+  const projectIdToGroupName: Record<number, string> = React.useMemo(() => {
+    const map: Record<number, string> = {};
+    groups.forEach((group) => {
+      group.projectIds.forEach((pid) => {
+        map[pid] = group.name;
+      });
+    });
+    return map;
+  }, [groups]);
+
+  if (loading || groupsLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <LoadingSpinner size="lg" />
@@ -274,6 +311,19 @@ export const PipelinesDashboardPage: React.FC = () => {
             </div>
 
             <select
+              value={groupFilter}
+              onChange={(e) => setGroupFilter(e.target.value)}
+              className="input max-w-xs"
+            >
+              <option value="all">All Groups</option>
+              {groups.map((group) => (
+                <option key={group.id} value={group.id.toString()}>
+                  {group.name}
+                </option>
+              ))}
+            </select>
+
+            <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="input max-w-xs"
@@ -304,6 +354,7 @@ export const PipelinesDashboardPage: React.FC = () => {
           retryingPipelines={retryingPipelines}
           handleRetryPipeline={handleRetryPipeline}
           error={error}
+          projectIdToGroupName={projectIdToGroupName}
         />
       </div>
     </div>
