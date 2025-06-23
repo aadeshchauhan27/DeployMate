@@ -81,17 +81,23 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       className: "badge-error",
       iconClassName: "text-red-600",
     },
+    manual: {
+      label: "Canceled",
+      icon: XCircle,
+      className: "badge-error",
+      iconClassName: "text-red-600",
+    },
   };
 
   const config = statusConfig[status];
-  const Icon = config.icon;
+  const Icon = config?.icon;
 
   return (
     <span
-      className={`${config.className} ${className} flex items-center gap-1`}
+      className={`${config?.className} ${className} flex items-center gap-1`}
     >
-      <Icon className={`w-3 h-3 ${config.iconClassName}`} />
-      {config.label}
+      <Icon className={`w-3 h-3 ${config?.iconClassName}`} />
+      {config?.label}
     </span>
   );
 };

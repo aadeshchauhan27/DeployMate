@@ -7,6 +7,8 @@ import { Message } from "../components/Message";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { ButtonWithLoader } from "../components/ButtonWithLoader";
 import { AppHeader } from "../components/AppHeader";
+import { GroupPipelineStatus } from "../components/GroupPipelineStatus";
+import { ProjectsInGroupSection } from "../components/ProjectsInGroupSection";
 
 interface ProjectGroup {
   id: number;
@@ -214,162 +216,98 @@ export const GroupsPage: React.FC = () => {
   return (
     <>
       <AppHeader />
-      <div className="max-w-4xl mx-auto py-8">
-        {message && (
-          <Message
-            type={message.type}
-            message={message.text}
-            onClose={() => setMessage(null)}
-          />
-        )}
-        <h1 className="text-2xl font-bold mb-6">
-          Project Groups & Bulk Actions
-        </h1>
-        <div className="mb-6 flex gap-4 items-end">
-          <input
-            className="input"
-            type="text"
-            placeholder="New group name"
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-          />
-          <button className="btn-primary" onClick={handleCreateGroup}>
-            Create Group
-          </button>
-          <ButtonWithLoader
-            className="btn-secondary"
-            onClick={handleSaveGroups}
+     <div className="max-w-7xl mx-auto py-8">
+  {message && (
+    <Message
+      type={message.type}
+      message={message.text}
+      onClose={() => setMessage(null)}
+    />
+  )}
+  <h1 className="text-2xl font-bold mb-6">Project Groups & Bulk Actions</h1>
+
+  <div className="flex gap-8">
+    {/* Left Panel - Group List */}
+    <div className="w-1/4">
+      <h2 className="font-semibold mb-2">Groups</h2>
+      <input
+        className="input mb-2"
+        type="text"
+        placeholder="New group name"
+        value={newGroupName}
+        onChange={(e) => setNewGroupName(e.target.value)}
+      />
+      <button className="btn-primary w-full mb-2" onClick={handleCreateGroup}>
+        Create Group
+      </button>
+      <ButtonWithLoader
+        className="btn-secondary w-full"
+        onClick={handleSaveGroups}
+        loading={loading}
+      >
+        Save Groups
+      </ButtonWithLoader>
+      <ul className="mt-4 space-y-2">
+        {groups.map((group) => (
+          <li key={group.id}>
+            <button
+              className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
+                selectedGroupId === group.id
+                  ? "bg-primary-100 text-primary-800 font-bold"
+                  : "hover:bg-gray-100"
+              }`}
+              onClick={() => handleSelectGroup(group.id)}
+            >
+              {group.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+
+    {/* Center Panel - Projects in Group & Actions */}
+    <div className="w-1/2">
+      {selectedGroupId ? (
+        <>
+          <ProjectsInGroupSection
+            groupId={selectedGroupId}
+            projects={projects}
+            groups={groups}
+            onAdd={handleAddProjectToGroup}
+            onRemove={handleRemoveProjectFromGroup}
+            selectedProjectIds={selectedProjectIds}
+            onBulkRelease={handleBulkCreateReleaseBranch}
+            onBulkDeploy={handleBulkDeploy}
             loading={loading}
-          >
-            Save Group
-          </ButtonWithLoader>
+            creatingRelease={creatingRelease}
+            bulkDeployBranch={bulkDeployBranch}
+            setBulkDeployBranch={setBulkDeployBranch}
+            groupBranches={groupBranches}
+            releaseBranchName={releaseBranchName}
+            setReleaseBranchName={setReleaseBranchName}
+          />
+        </>
+      ) : (
+        <div className="text-gray-500">
+          Select a group to manage projects and bulk actions.
         </div>
-        <div className="flex gap-8">
-          {/* Groups List */}
-          <div className="w-1/3">
-            <h2 className="font-semibold mb-2">Groups</h2>
-            <ul className="space-y-2">
-              {groups.map((group) => (
-                <li key={group.id}>
-                  <button
-                    className={`w-full text-left px-3 py-2 rounded-lg transition-all ${
-                      selectedGroupId === group.id
-                        ? "bg-primary-100 text-primary-800 font-bold"
-                        : "hover:bg-gray-100"
-                    }`}
-                    onClick={() => handleSelectGroup(group.id)}
-                  >
-                    {group.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-          {/* Projects in Group & Actions */}
-          <div className="flex-1">
-            {selectedGroupId ? (
-              <>
-                <h2 className="font-semibold mb-2">Projects in Group</h2>
-                <ul className="mb-4 space-y-2">
-                  {groups
-                    .find((g) => g.id === selectedGroupId)
-                    ?.projectIds.map((pid) => {
-                      const project = projects.find((p) => p.id === pid);
-                      if (!project) return null;
-                      return (
-                        <li
-                          key={project.id}
-                          className="flex items-center justify-between bg-gray-50 rounded px-3 py-2"
-                        >
-                          <span>{project.name}</span>
-                          <button
-                            className="btn-danger text-xs"
-                            onClick={() =>
-                              handleRemoveProjectFromGroup(project.id)
-                            }
-                          >
-                            Remove
-                          </button>
-                        </li>
-                      );
-                    })}
-                </ul>
-                <h2 className="font-semibold mb-2">Add Projects to Group</h2>
-                <ul className="mb-4 space-y-2">
-                  {projects
-                    .filter(
-                      (p) =>
-                        !groups
-                          .find((g) => g.id === selectedGroupId)
-                          ?.projectIds.includes(p.id)
-                    )
-                    .map((project) => (
-                      <li
-                        key={project.id}
-                        className="flex items-center justify-between bg-gray-50 rounded px-3 py-2"
-                      >
-                        <span>{project.name}</span>
-                        <button
-                          className="btn-primary text-xs"
-                          onClick={() => handleAddProjectToGroup(project.id)}
-                        >
-                          Add
-                        </button>
-                      </li>
-                    ))}
-                </ul>
-                <div className="mb-4">
-                  <h2 className="font-semibold mb-2">
-                    Bulk Create Release Branch
-                  </h2>
-                  <input
-                    className="input mb-2"
-                    type="text"
-                    placeholder="Release branch name (e.g. 1.0.0)"
-                    value={releaseBranchName}
-                    onChange={(e) => setReleaseBranchName(e.target.value)}
-                  />
-                  <ButtonWithLoader
-                    className="btn-primary"
-                    onClick={handleBulkCreateReleaseBranch}
-                    loading={creatingRelease}
-                    disabled={!releaseBranchName.trim()}
-                  >
-                    Create Release Branch for All
-                  </ButtonWithLoader>
-                </div>
-                <div>
-                  <h2 className="font-semibold mb-2">Bulk Deploy</h2>
-                  <select
-                    className="input mb-2"
-                    value={bulkDeployBranch}
-                    onChange={(e) => setBulkDeployBranch(e.target.value)}
-                  >
-                    <option value="">Select branch</option>
-                    {groupBranches.map((branch: any) => (
-                      <option key={branch.name} value={branch.name}>
-                        {branch.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ButtonWithLoader
-                    className="btn-primary"
-                    onClick={handleBulkDeploy}
-                    loading={loading}
-                    disabled={!bulkDeployBranch}
-                  >
-                    Deploy All
-                  </ButtonWithLoader>
-                </div>
-              </>
-            ) : (
-              <div className="text-gray-500">
-                Select a group to manage projects and bulk actions.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      )}
+    </div>
+
+    {/* Right Panel - Pipeline Status */}
+    <div className="w-1/4">
+      <h2 className="font-semibold mb-2">Group Pipeline Status</h2>
+      {selectedGroupId && (
+        <GroupPipelineStatus
+          projectIds={
+            groups.find((g) => g.id === selectedGroupId)?.projectIds || []
+          }
+        />
+      )}
+    </div>
+  </div>
+</div>
+
     </>
   );
 };

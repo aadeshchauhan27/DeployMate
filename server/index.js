@@ -72,6 +72,7 @@ passport.use(
         process.env.GITLAB_REDIRECT_URI ||
         "http://localhost:3001/auth/gitlab/callback",
       scope: "read_user read_api api",
+      baseURL: "https://git.hilti.com"
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -136,11 +137,11 @@ app.get("/api/test-gitlab", requireAuth, async (req, res) => {
   try {
     console.log("🧪 Testing GitLab API connectivity...");
     console.log(`🔑 Access token: ${req.user.accessToken.substring(0, 10)}...`);
-    console.log(`🌐 GitLab URL: ${process.env.GITLAB_URL}`);
+    console.log(`🌐 GitLab URL: ${process.env.GITLAB_BASE_URL}`);
 
     // Test user info
     const userResponse = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/user`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/user`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
@@ -152,7 +153,7 @@ app.get("/api/test-gitlab", requireAuth, async (req, res) => {
 
     // Test projects access
     const projectsResponse = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/projects`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
@@ -204,15 +205,18 @@ app.get("/api/test-gitlab", requireAuth, async (req, res) => {
 // GitLab API routes
 app.get("/api/projects", requireAuth, async (req, res) => {
   try {
+    console.log("🔐 Access token:", req.user.accessToken);
+
     const response = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/projects`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
         },
         params: {
           membership: true,
-          per_page: 50,
+          per_page: 100,
+          search: "Decking",
         },
       }
     );
@@ -229,7 +233,7 @@ app.get("/api/projects", requireAuth, async (req, res) => {
 app.get("/api/projects/:id/pipelines", requireAuth, async (req, res) => {
   try {
     const response = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}/pipelines`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/pipelines`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
@@ -265,7 +269,7 @@ app.post(
       );
 
       const response = await axios.post(
-        `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/pipelines/${pipelineId}/retry`,
+        `${process.env.GITLAB_BASE_URL}/api/v4/projects/${projectId}/pipelines/${pipelineId}/retry`,
         {},
         {
           headers: {
@@ -297,7 +301,7 @@ app.post(
 app.get("/api/projects/:id/jobs", requireAuth, async (req, res) => {
   try {
     const response = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}/jobs`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/jobs`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
@@ -334,7 +338,7 @@ app.post(
       // First, let's check if the project exists and get its default branch
       try {
         const projectResponse = await axios.get(
-          `${process.env.GITLAB_URL}/api/v4/projects/${projectId}`,
+          `${process.env.GITLAB_BASE_URL}/api/v4/projects/${projectId}`,
           {
             headers: {
               Authorization: `Bearer ${req.user.accessToken}`,
@@ -351,7 +355,7 @@ app.post(
         console.log(`🎯 Using branch: ${branchToUse}`);
 
         const response = await axios.post(
-          `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/pipeline`,
+          `${process.env.GITLAB_BASE_URL}/api/v4/projects/${projectId}/pipeline`,
           {
             ref: branchToUse,
             variables: Object.entries(variables).map(([key, value]) => ({
@@ -410,7 +414,7 @@ app.post(
 app.get("/api/projects/:id/environments", requireAuth, async (req, res) => {
   try {
     const response = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}/environments`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/environments`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
@@ -433,7 +437,7 @@ app.post(
   async (req, res) => {
     try {
       const response = await axios.post(
-        `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}/environments/${req.params.environmentId}/stop`,
+        `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/environments/${req.params.environmentId}/stop`,
         {},
         {
           headers: {
@@ -464,7 +468,7 @@ app.post(
       }
       // Fetch project to get default branch
       const projectResponse = await axios.get(
-        `${process.env.GITLAB_URL}/api/v4/projects/${projectId}`,
+        `${process.env.GITLAB_BASE_URL}/api/v4/projects/${projectId}`,
         {
           headers: {
             Authorization: `Bearer ${req.user.accessToken}`,
@@ -476,7 +480,7 @@ app.post(
       const newBranchName = `release/${releaseNumber}`;
       // Create the new branch from default branch
       const branchResponse = await axios.post(
-        `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/repository/branches`,
+        `${process.env.GITLAB_BASE_URL}/api/v4/projects/${projectId}/repository/branches`,
         null,
         {
           params: {
@@ -493,7 +497,7 @@ app.post(
       try {
         // 1. Get the .gitlab-ci.yml content from the default branch
         const ciFileResponse = await axios.get(
-          `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/repository/files/.gitlab-ci.yml/raw`,
+          `${process.env.GITLAB_BASE_URL}/api/v4/projects/${projectId}/repository/files/.gitlab-ci.yml/raw`,
           {
             headers: {
               Authorization: `Bearer ${req.user.accessToken}`,
@@ -507,7 +511,7 @@ app.post(
 
         // 2. Create or update .gitlab-ci.yml in the new branch
         await axios.post(
-          `${process.env.GITLAB_URL}/api/v4/projects/${projectId}/repository/files/.gitlab-ci.yml`,
+          `${process.env.GITLAB_BASE_URL}/api/v4/projects/${projectId}/repository/files/.gitlab-ci.yml`,
           {
             branch: newBranchName,
             content: ciFileContent,
@@ -552,7 +556,7 @@ app.post(
 app.get("/api/projects/:id/branches", requireAuth, async (req, res) => {
   try {
     const response = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}/repository/branches`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/repository/branches`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
@@ -583,7 +587,7 @@ app.use((err, req, res, next) => {
 app.get("/api/projects/:id", requireAuth, async (req, res) => {
   try {
     const response = await axios.get(
-      `${process.env.GITLAB_URL}/api/v4/projects/${req.params.id}`,
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}`,
       {
         headers: {
           Authorization: `Bearer ${req.user.accessToken}`,
