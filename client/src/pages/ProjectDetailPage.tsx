@@ -284,16 +284,17 @@ export const ProjectDetailPage: React.FC = () => {
                       </span>
                       <StatusBadge status={pipeline.status} />
                     </div>
-                    <a
-                      href={pipeline.web_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary-600 hover:text-primary-700 text-sm"
-                    >
-                      View Details →
-                    </a>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={pipeline.web_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-600 hover:text-primary-700 text-sm"
+                      >
+                        View Details →
+                      </a>
+                    </div>
                   </div>
-
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
                     <div>
                       <span className="font-medium">Branch:</span>{" "}
@@ -328,7 +329,6 @@ export const ProjectDetailPage: React.FC = () => {
                   </div>
                 </div>
               ))}
-
               {pipelines.length === 0 && (
                 <div className="text-center py-8">
                   <p className="text-gray-500">No pipelines found</p>
@@ -351,14 +351,16 @@ export const ProjectDetailPage: React.FC = () => {
                       </span>
                       <StatusBadge status={job.status} />
                     </div>
-                    <a
-                      href={job.web_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary-600 hover:text-primary-700 text-sm"
-                    >
-                      View Details →
-                    </a>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={job.web_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-600 hover:text-primary-700 text-sm"
+                      >
+                        View Details →
+                      </a>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">

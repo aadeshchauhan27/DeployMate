@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { projectsAPI } from "../services/api";
 import { AppHeader } from "../components/AppHeader";
 import { Message } from "../components/Message";
-import { BulkReleaseMenu } from "../components/BulkReleaseMenu";
+import { ModuleReleaseMenu } from "../components/ModuleReleaseMenu";
 
 interface ProjectGroup {
   id: number;
@@ -12,7 +12,7 @@ interface ProjectGroup {
 
 const GROUPS_STORAGE_URL = "http://localhost:3001/api/groups";
 
-export const BulkReleasePage: React.FC = () => {
+export const ModuleReleasePage: React.FC = () => {
   const [groups, setGroups] = useState<ProjectGroup[]>([]);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [releaseBranchName, setReleaseBranchName] = useState("");
@@ -96,7 +96,7 @@ export const BulkReleasePage: React.FC = () => {
           />
         )}
         <div className="flex flex-col gap-6">
-          <h1 className="text-2xl font-bold mb-4">Bulk Release</h1>
+          <h1 className="text-2xl font-bold mb-4">Module Release</h1>
           <div className="mb-4">
             <label className="block text-sm font-medium mb-1">Select Module</label>
             <select
@@ -128,7 +128,7 @@ export const BulkReleasePage: React.FC = () => {
               </select>
             </div>
           )}
-          <BulkReleaseMenu
+          <ModuleReleaseMenu
             releaseBranchName={releaseBranchName}
             setReleaseBranchName={setReleaseBranchName}
             onBulkRelease={handleBulkCreateReleaseBranch}

@@ -63,7 +63,7 @@ export const PipelinesList: React.FC<PipelinesListProps> = ({
         {Object.entries(grouped).map(([bulkId, groupPipes], idx) => (
           <div key={bulkId} className="border-2 border-blue-400 rounded-lg p-2 bg-blue-50">
             <div className="mb-2 flex items-center gap-2">
-              <span className="text-blue-700 font-semibold text-sm">Bulk Deployment</span>
+              <span className="text-blue-700 font-semibold text-sm">Module Deployment</span>
               <span className="text-xs text-blue-500">ID: {bulkId}</span>
             </div>
             <div className="space-y-4">

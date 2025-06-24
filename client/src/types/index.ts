@@ -54,7 +54,7 @@ export interface Pipeline {
 export interface Job {
   id: number;
   name: string;
-  status: "running" | "pending" | "success" | "failed" | "canceled" | "skipped";
+  status: "running" | "pending" | "success" | "failed" | "canceled" | "skipped" | "manual";
   stage: string;
   created_at: string;
   started_at: string | null;

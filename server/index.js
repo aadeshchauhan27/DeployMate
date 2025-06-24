@@ -683,6 +683,50 @@ app.post('/api/bulk-deployments', requireAuth, (req, res) => {
   res.json({ success: true, record });
 });
 
+app.get("/api/projects/:id/pipelines/:pipeline_id/jobs", requireAuth, async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/pipelines/${req.params.pipeline_id}/jobs`,
+      {
+        headers: {
+          Authorization: `Bearer ${req.user.accessToken}`,
+        },
+        params: {
+          per_page: 50,
+        },
+      }
+    );
+    res.json(response.data);
+  } catch (error) {
+    console.error(
+      "Error fetching pipeline jobs:",
+      error.response?.data || error.message
+    );
+    res.status(500).json({ error: "Failed to fetch pipeline jobs" });
+  }
+});
+
+app.post("/api/projects/:id/jobs/:job_id/play", requireAuth, async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${process.env.GITLAB_BASE_URL}/api/v4/projects/${req.params.id}/jobs/${req.params.job_id}/play`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${req.user.accessToken}`,
+        },
+      }
+    );
+    res.json(response.data);
+  } catch (error) {
+    console.error(
+      "Error playing manual job:",
+      error.response?.data || error.message
+    );
+    res.status(500).json({ error: "Failed to play manual job" });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 DeployMate server running on port ${PORT}`);
   console.log(

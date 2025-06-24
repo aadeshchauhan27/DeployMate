@@ -10,7 +10,7 @@ interface Props {
   disabled?: boolean;
 }
 
-export const BulkDeployMenu: React.FC<Props> = ({
+export const ModuleDeployMenu: React.FC<Props> = ({
   bulkDeployBranch,
   setBulkDeployBranch,
   groupBranches,
@@ -24,7 +24,7 @@ export const BulkDeployMenu: React.FC<Props> = ({
 
   return (
     <div>
-      <h2 className="font-semibold mb-2">Bulk Deploy</h2>
+      <h2 className="font-semibold mb-2">Module Deploy</h2>
       <select
         className="input mb-2"
         value={bulkDeployBranch}

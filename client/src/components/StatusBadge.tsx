@@ -18,7 +18,8 @@ interface StatusBadgeProps {
     | "skipped"
     | "error"
     | "available"
-    | "stopped";
+    | "stopped"
+    | "manual";
   className?: string;
 }
 
@@ -82,10 +83,10 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       iconClassName: "text-red-600",
     },
     manual: {
-      label: "Canceled",
-      icon: XCircle,
-      className: "badge-error",
-      iconClassName: "text-red-600",
+      label: "Manual Action",
+      icon: Clock,
+      className: "badge-warning",
+      iconClassName: "text-yellow-600",
     },
   };
 

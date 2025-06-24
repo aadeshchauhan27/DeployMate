@@ -9,7 +9,7 @@ interface Props {
   disabled?: boolean;
 }
 
-export const BulkReleaseMenu: React.FC<Props> = ({
+export const ModuleReleaseMenu: React.FC<Props> = ({
   releaseBranchName,
   setReleaseBranchName,
   onBulkRelease,
@@ -17,7 +17,7 @@ export const BulkReleaseMenu: React.FC<Props> = ({
   disabled,
 }) => (
   <div className="mb-4">
-    <h2 className="font-semibold mb-2">Bulk Create Release Branch</h2>
+    <h2 className="font-semibold mb-2">Module Create Release Branch</h2>
     <input
       className="input mb-2"
       type="text"

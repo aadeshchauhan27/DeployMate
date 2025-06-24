@@ -11,17 +11,17 @@ const navItems = [
   },
   {
     to: "/group-management",
-    label: "Group Management",
+    label: "Modules",
     icon: <Plus className="w-4 h-4" />,
   },
   {
-    to: "/bulk-release",
-    label: "Bulk Release",
+    to: "/module-release",
+    label: "Module Release",
     icon: null,
   },
   {
-    to: "/bulk-deploy",
-    label: "Bulk Deploy",
+    to: "/module-deploy",
+    label: "Module Deploy",
     icon: null,
   },
   {

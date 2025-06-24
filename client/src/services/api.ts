@@ -69,6 +69,12 @@ export const projectsAPI = {
 
   getById: (projectId: number): Promise<Project> =>
     api.get(`/api/projects/${projectId}`).then((res) => res.data),
+
+  getPipelineJobs: (projectId: number, pipelineId: number): Promise<Job[]> =>
+    api.get(`/api/projects/${projectId}/pipelines/${pipelineId}/jobs`).then((res) => res.data),
+
+  playJob: (projectId: number, jobId: number): Promise<Job> =>
+    api.post(`/api/projects/${projectId}/jobs/${jobId}/play`).then((res) => res.data),
 };
 
 export default api;

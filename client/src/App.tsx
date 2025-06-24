@@ -12,8 +12,8 @@ import { PipelinesDashboardPage } from "./pages/PipelinesDashboardPage";
 import { LoadingSpinner } from "./components/LoadingSpinner";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { GroupManagementPage } from "./pages/GroupManagementPage";
-import { BulkReleasePage } from "./pages/BulkReleasePage";
-import { BulkDeployPage } from "./pages/BulkDeployPage";
+import { ModuleReleasePage } from "./pages/ModuleReleasePage";
+import { ModuleDeployPage } from "./pages/ModuleDeployPage";
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -83,18 +83,18 @@ const AppRoutes: React.FC = () => {
         }
       />
       <Route
-        path="/bulk-release"
+        path="/module-release"
         element={
           <ProtectedRoute>
-            <BulkReleasePage />
+            <ModuleReleasePage />
           </ProtectedRoute>
         }
       />
       <Route
-        path="/bulk-deploy"
+        path="/module-deploy"
         element={
           <ProtectedRoute>
-            <BulkDeployPage />
+            <ModuleDeployPage />
           </ProtectedRoute>
         }
       />

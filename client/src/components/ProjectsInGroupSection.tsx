@@ -83,7 +83,7 @@ export const ProjectsInGroupSection: React.FC<Props> = ({
       </ul>
 
       <div className="mb-4">
-        <h2 className="font-semibold mb-2">Bulk Create Release Branch</h2>
+        <h2 className="font-semibold mb-2">Module Create Release Branch</h2>
         <input
           className="input mb-2"
           type="text"
@@ -102,7 +102,7 @@ export const ProjectsInGroupSection: React.FC<Props> = ({
       </div>
 
       <div>
-        <h2 className="font-semibold mb-2">Bulk Deploy</h2>
+        <h2 className="font-semibold mb-2">Module Deploy</h2>
         <select
           className="input mb-2"
           value={bulkDeployBranch}
