@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
-import { projectsAPI } from "../services/api";
+import { projectsAPI, triggerPipeline } from "../services/api";
 import { AppHeader } from "../components/AppHeader";
 import { Message } from "../components/Message";
 import { ModuleDeployMenu } from "../components/ModuleDeployMenu";
@@ -51,6 +51,7 @@ export const ModuleDeployPage: React.FC = () => {
   const [playingGroupJob, setPlayingGroupJob] = useState<{ [groupBranchKey: string]: string | null }>({});
   const pollingIntervals = useRef<{ [pipelineId: number]: NodeJS.Timeout }>({});
   const [branchesLoading, setBranchesLoading] = useState(false);
+  const [recentlyTriggeredPipelineId, setRecentlyTriggeredPipelineId] = useState<number | null>(null);
 
   useEffect(() => {
     fetch(GROUPS_STORAGE_URL)
@@ -95,7 +96,7 @@ export const ModuleDeployPage: React.FC = () => {
   const fetchHistory = async () => {
     setHistoryLoading(true);
     try {
-      await new Promise(res => setTimeout(res, 2000)); // Artificial delay for loader visibility
+      await new Promise(res => setTimeout(res, 5000)); // Artificial delay for loader visibility (increased to 5s)
       const res = await axios.get("/api/bulk-deployments");
       setHistory(res.data);
     } finally {
@@ -117,7 +118,9 @@ export const ModuleDeployPage: React.FC = () => {
       setPipelinesLoading(true);
       try {
         const projectsData = await projectsAPI.getAll();
-        const pipelinesPromises = projectsData.map(async (project) => {
+        // Fetch pipelines for first 10 projects
+        const initialProjects = projectsData.slice(0, 10);
+        const pipelinesPromises = initialProjects.map(async (project) => {
           try {
             const pipelines = await projectsAPI.getPipelines(project.id);
             return pipelines.map((pipeline) => ({
@@ -132,6 +135,26 @@ export const ModuleDeployPage: React.FC = () => {
         });
         const pipelinesResults = await Promise.all(pipelinesPromises);
         if (isMounted) setAllPipelines(pipelinesResults.flat());
+
+        // Fetch the rest in the background
+        const restProjects = projectsData.slice(10);
+        if (restProjects.length > 0) {
+          const restPipelinesPromises = restProjects.map(async (project) => {
+            try {
+              const pipelines = await projectsAPI.getPipelines(project.id);
+              return pipelines.map((pipeline) => ({
+                ...pipeline,
+                project_name: project.name,
+                project_path: project.path_with_namespace,
+                project_id: project.id,
+              }));
+            } catch {
+              return [];
+            }
+          });
+          const restPipelinesResults = await Promise.all(restPipelinesPromises);
+          if (isMounted) setAllPipelines(prev => [...prev, ...restPipelinesResults.flat()]);
+        }
       } finally {
         if (isMounted) setPipelinesLoading(false);
       }
@@ -175,8 +198,22 @@ export const ModuleDeployPage: React.FC = () => {
       if (!byDate[date][key]) byDate[date][key] = [];
       byDate[date][key].push(pipeline);
     });
+    // Special-case: add recently triggered pipeline if not already present
+    if (recentlyTriggeredPipelineId) {
+      const specialPipeline = allPipelines.find(p => p.id === recentlyTriggeredPipelineId);
+      if (specialPipeline) {
+        const date = specialPipeline.created_at ? new Date(specialPipeline.created_at).toISOString().slice(0, 10) : 'Unknown Date';
+        const branch = specialPipeline.ref;
+        const key = `${selectedGroup?.name}||${branch}`;
+        if (!byDate[date]) byDate[date] = {};
+        if (!byDate[date][key]) byDate[date][key] = [];
+        if (!byDate[date][key].some(p => p.id === specialPipeline.id)) {
+          byDate[date][key].unshift(specialPipeline);
+        }
+      }
+    }
     return byDate;
-  }, [allPipelines, projectIdToGroupName, selectedGroupId, selectedGroup, bulkDeployBranch]);
+  }, [allPipelines, projectIdToGroupName, selectedGroupId, selectedGroup, bulkDeployBranch, recentlyTriggeredPipelineId]);
 
   // Replace the useEffect for polling jobs for manual/running pipelines
   useEffect(() => {
@@ -200,7 +237,7 @@ export const ModuleDeployPage: React.FC = () => {
           })
           .catch(() => {});
       });
-    }, 10000); // 10 seconds
+    }, 3000); // 3 seconds
     return () => clearInterval(interval);
   }, [allPipelines]);
 
@@ -440,6 +477,28 @@ export const ModuleDeployPage: React.FC = () => {
     };
   }, [allPipelines]);
 
+  // Function to trigger pipeline for Cluster Switching QA using project ID from .env
+  const handleClusterSwitchQA = async () => {
+    const projectId = process.env.REACT_APP_CLUSTER_SWITCH_PROJECT_ID;
+    if (!projectId) {
+      setMessage({ type: 'error', text: 'Cluster Switch Project ID not set in .env' });
+      return;
+    }
+    try {
+      setLoading(true);
+      const pipeline = await triggerPipeline(Number(projectId), 'release/QA', { ENVIRONMENT: 'QA', ACTION: 'cluster_switch' });
+      setAllPipelines(prev => [pipeline, ...prev]);
+      const jobs = await projectsAPI.getPipelineJobs(pipeline.project_id, pipeline.id);
+      setPipelineJobs(prev => ({ ...prev, [pipeline.id]: jobs }));
+      setRecentlyTriggeredPipelineId(pipeline.id);
+      setMessage({ type: 'success', text: 'Cluster Switching QA pipeline triggered!' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Failed to trigger Cluster Switching QA pipeline' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <>
       <AppHeader />
@@ -547,7 +606,63 @@ export const ModuleDeployPage: React.FC = () => {
               </select>
             </div>
           )}
+          {selectedGroup && (() => {
+            // Find latest pipeline for each project in the group and branch
+            const latestPipelineIdByProjectId: { [projectId: number]: number } = {};
+            allPipelines.forEach((pipeline) => {
+              if (
+                projectIdToGroupName[pipeline.project_id] === selectedGroup.name &&
+                (!bulkDeployBranch || pipeline.ref === bulkDeployBranch)
+              ) {
+                const existing = latestPipelineIdByProjectId[pipeline.project_id];
+                if (
+                  !existing ||
+                  new Date(pipeline.created_at) > new Date(allPipelines.find(p => p.id === existing)?.created_at || 0)
+                ) {
+                  latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
+                }
+              }
+            });
+            const activePipelines = Object.values(latestPipelineIdByProjectId).map(id =>
+              allPipelines.find(p => p.id === id)
+            ).filter(Boolean);
+
+            const allQADeployed = activePipelines.length > 0 && activePipelines.every(p =>
+              pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_qa") &&
+              !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
+            );
+            const allStageDeployed = activePipelines.length > 0 && activePipelines.every(p =>
+              pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_stage") &&
+              !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_stage")
+            );
+            const allProdDeployed = activePipelines.length > 0 && activePipelines.every(p =>
+              pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_production") &&
+              !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_production")
+            );
+
+            return (
+              <>
+                {allQADeployed && (
+                  <span className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold">
+                    QA Deployed ({activePipelines.length})
+                  </span>
+                )}
+                {allStageDeployed && (
+                  <span className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold">
+                    Staging Deployed ({activePipelines.length})
+                  </span>
+                )}
+                {allProdDeployed && (
+                  <span className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold">
+                    Production Deployed ({activePipelines.length})
+                  </span>
+                )}
+              </>
+            );
+          })()}
         </div>
+        {/* Separator below header */}
+        <div className="border-b border-gray-300 mb-4" />
         {historyLoading ? (
           <div className="flex justify-center py-8">
             <LoadingSpinner size="md" />
@@ -583,7 +698,7 @@ export const ModuleDeployPage: React.FC = () => {
                             <span className="text-xs text-blue-500">Branch: {branch}</span>
                             <span className="text-xs text-gray-700">{successCount} Success, {failedCount} Failed, {runningCount} Running, {total} Total</span>
                           </div>
-                          <div className="flex items-center gap-2 ml-auto">
+                          <div className="flex items-center gap-2">
                             {/* Group-level Manual Action Buttons */}
                             {(() => {
                               // Only consider the latest (active) pipeline for each project for header action button counts
@@ -608,10 +723,18 @@ export const ModuleDeployPage: React.FC = () => {
                                   }
                                 });
                               });
-                              // Define allQADeployed for button enable/disable logic
-                              const allQADeployed = activePipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === 'success' && j.name === 'deploy_to_qa') &&
-                                !pipelineJobs[p.id]?.some(j => j.status === 'manual' && j.name === 'deploy_to_qa')
+                              // Check if ALL active pipelines have passed each stage
+                              const allQADeployed = activePipelines.length > 0 && activePipelines.every(p =>
+                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_qa") &&
+                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
+                              );
+                              const allStageDeployed = activePipelines.length > 0 && activePipelines.every(p =>
+                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_stage") &&
+                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_stage")
+                              );
+                              const allProdDeployed = activePipelines.length > 0 && activePipelines.every(p =>
+                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_production") &&
+                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_production")
                               );
                               return (
                                 <>
@@ -633,10 +756,9 @@ export const ModuleDeployPage: React.FC = () => {
                                     // Only enable Deploy to Stage/Production if allQADeployed is true
                                     let shouldDisable = isProcessing;
                                     if (jobName === 'deploy_to_stage') {
-                                      shouldDisable = shouldDisable || !allQADeployed;
+                                      shouldDisable = shouldDisable || !allStageDeployed;
                                     }
                                     if (jobName === 'deploy_to_production') {
-                                      // Only enable if all active pipelines have both QA and Stage jobs done (success) and no pending manual jobs for those names
                                       const allQAAndStageDeployed = activePipelines.every(p =>
                                         !pipelineJobs[p.id]?.some(j => j.status === 'manual' && (j.name === 'deploy_to_qa' || j.name === 'deploy_to_stage'))
                                       );
@@ -649,7 +771,7 @@ export const ModuleDeployPage: React.FC = () => {
                                         disabled={shouldDisable}
                                         className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${isProcessing ? 'bg-blue-400 text-white' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
                                       >
-                                        {isProcessing ? 'Executing...' : manualJobLabel(jobName, false) + (count > 1 ? ` (${count})` : '')}
+                                        {isProcessing ? 'Deploying' : manualJobLabel(jobName, false) + (count > 1 ? ` (${count})` : '')}
                                       </button>
                                     );
                                   })}
@@ -708,20 +830,20 @@ export const ModuleDeployPage: React.FC = () => {
                                        const qaDeployed = pipelineJobs[pipeline.id]?.some(j => j.status === 'success' && j.name === 'deploy_to_qa') &&
                                          !pipelineJobs[pipeline.id]?.some(j => j.status === 'manual' && j.name === 'deploy_to_qa');
                                        const manualButtons = pipelineJobs[pipeline.id]?.filter(j => j.status === 'manual' && isDeployAction(j.name)).reverse().map((job) => {
-                                         let shouldDisable = playingJobIds.has(job.id);
+                                         let shouldDisable = true; // Always disabled for project-level buttons
                                          let buttonClass = 'bg-yellow-400 text-black hover:bg-yellow-500';
                                          if (job.name === 'deploy_to_stage' || job.name === 'deploy_to_production') {
-                                           shouldDisable = shouldDisable || !qaDeployed;
+                                           shouldDisable = true;
                                          }
                                          if (shouldDisable && playingJobIds.has(job.id)) buttonClass = 'bg-blue-400 text-white';
                                          return (
                                            <button
                                              key={job.id}
-                                             onClick={() => handlePlayJob(pipeline.project_id, job.id, pipeline.id)}
-                                             disabled={shouldDisable}
-                                             className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${buttonClass}`}
+                                             onClick={() => {}}
+                                             disabled={true}
+                                             className={`ml-2 px-2 py-1 text-xs rounded font-semibold opacity-60 cursor-not-allowed ${buttonClass}`}
                                            >
-                                             {shouldDisable && playingJobIds.has(job.id) ? 'Executing...' : manualJobLabel(job.name, false)}
+                                             {playingJobIds.has(job.id) ? 'Deploying' : manualJobLabel(job.name, false)}
                                            </button>
                                          );
                                        });
@@ -743,6 +865,66 @@ export const ModuleDeployPage: React.FC = () => {
                              });
                            })()}
                            </>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between">
+                          <div className="flex items-center gap-2 mt-2">
+                            {(() => {
+                              // Only consider the latest (active) pipeline for each project
+                              const latestPipelineIdByProjectId: { [projectId: number]: number } = {};
+                              pipelines.forEach((pipeline) => {
+                                const existing = latestPipelineIdByProjectId[pipeline.project_id];
+                                if (!existing || new Date(pipeline.created_at) > new Date(pipelines.find(p => p.id === existing)?.created_at || 0)) {
+                                  latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
+                                }
+                              });
+                              const activePipelines = pipelines.filter(p => latestPipelineIdByProjectId[p.project_id] === p.id);
+                              // Determine the highest environment reached by ANY active pipeline (PROD > STAGE > QA)
+                              const envOrder = ["deploy_to_qa", "deploy_to_staging", "deploy_to_production"];
+                              let maxEnvIndex = 0;
+                              activePipelines.forEach(p => {
+                                envOrder.forEach((env, idx) => {
+                                  if (pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === env) && idx > maxEnvIndex) {
+                                    maxEnvIndex = idx;
+                                  }
+                                });
+                              });
+                              const lastEnvKey = envOrder[maxEnvIndex];
+                              const lastEnv = lastEnvKey === "deploy_to_qa" ? "QA" : lastEnvKey === "deploy_to_staging" ? "STAGE" : "PROD";
+                              // Handler to trigger pipeline for all active projects in the group for the selected environment
+                              const handleGroupEnvAction = async (action: "cluster" | "alb") => {
+                                for (const pipeline of activePipelines) {
+                                  await projectsAPI.triggerPipeline(pipeline.project_id, pipeline.ref, {
+                                    ENVIRONMENT: lastEnv,
+                                    ACTION: action === "cluster" ? "cluster_switch" : "change_alb"
+                                  });
+                                }
+                                fetchHistory();
+                              };
+                              // Determine if ALL active pipelines have deployed to QA (strict)
+                              const allQADeployed = activePipelines.length > 0 && activePipelines.every(p =>
+                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_qa") &&
+                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
+                              );
+                              return (
+                                <>
+                                  <ButtonWithLoader
+                                    className={`bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded text-xs ${!allQADeployed ? "opacity-60 cursor-not-allowed" : ""}`}
+                                    onClick={handleClusterSwitchQA}
+                                    disabled={!allQADeployed}
+                                  >
+                                    Cluster Switching {lastEnv}
+                                  </ButtonWithLoader>
+                                  <ButtonWithLoader
+                                    className={`bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-xs ${!allQADeployed ? "opacity-60 cursor-not-allowed" : ""}`}
+                                    onClick={() => handleGroupEnvAction("alb")}
+                                    disabled={!allQADeployed}
+                                  >
+                                    Change ALB {lastEnv}
+                                  </ButtonWithLoader>
+                                </>
+                              );
+                            })()}
+                          </div>
                         </div>
                       </div>
                     );

@@ -54,13 +54,6 @@ export const PipelinesDashboardPage: React.FC = () => {
       .finally(() => setGroupsLoading(false));
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      loadAllPipelines(false);
-    }, 15000); // 15 seconds
-    return () => clearInterval(interval);
-  }, []);
-
   const loadAllPipelines = async (isInitial = false) => {
     try {
       if (isInitial) {
@@ -74,8 +67,9 @@ export const PipelinesDashboardPage: React.FC = () => {
       const projectsData = await projectsAPI.getAll();
       setProjects(projectsData);
 
-      // Get pipelines for each project
-      const pipelinesPromises = projectsData.map(async (project) => {
+      // Fetch pipelines for first 10 projects
+      const initialProjects = projectsData.slice(0, 10);
+      const pipelinesPromises = initialProjects.map(async (project) => {
         try {
           const pipelines = await projectsAPI.getPipelines(project.id);
           return pipelines.map((pipeline) => ({
@@ -85,24 +79,47 @@ export const PipelinesDashboardPage: React.FC = () => {
             project_id: project.id,
           }));
         } catch (error) {
-          console.error(
-            `Failed to load pipelines for project ${project.name}:`,
-            error
-          );
+          console.error(`Failed to load pipelines for project ${project.name}:`, error);
           return [];
         }
       });
-
       const pipelinesResults = await Promise.all(pipelinesPromises);
       const allPipelinesData = pipelinesResults.flat();
-
       // Sort by creation date (newest first)
-      allPipelinesData.sort(
-        (a, b) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
-
+      allPipelinesData.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
       setAllPipelines(allPipelinesData);
+
+      // Fetch the rest in the background
+      const restProjects = projectsData.slice(10);
+      if (restProjects.length > 0) {
+        const restPipelinesPromises = restProjects.map(async (project) => {
+          try {
+            const pipelines = await projectsAPI.getPipelines(project.id);
+            return pipelines.map((pipeline) => ({
+              ...pipeline,
+              project_name: project.name,
+              project_path: project.path_with_namespace,
+              project_id: project.id,
+            }));
+          } catch (error) {
+            console.error(`Failed to load pipelines for project ${project.name}:`, error);
+            return [];
+          }
+        });
+        const restPipelinesResults = await Promise.all(restPipelinesPromises);
+        const restPipelinesData = restPipelinesResults.flat();
+        restPipelinesData.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        setAllPipelines(prev => {
+          // Merge and deduplicate by pipeline id
+          const merged = [...prev, ...restPipelinesData];
+          const seen = new Set();
+          return merged.filter(p => {
+            if (seen.has(p.id)) return false;
+            seen.add(p.id);
+            return true;
+          });
+        });
+      }
     } catch (error) {
       console.error("Failed to load pipelines:", error);
       setError("Failed to load pipelines. Please try again.");

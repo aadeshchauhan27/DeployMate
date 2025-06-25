@@ -43,11 +43,18 @@ export const DashboardPage: React.FC = () => {
       setLoading(true);
       setError(null);
       const projectsData = await projectsAPI.getAll();
-      setProjects(projectsData);
+      const initialProjects = projectsData.slice(0, 10);
+      setProjects(initialProjects);
+      // Optionally, fetch and append the rest in the background
+      if (projectsData.length > 10) {
+        setTimeout(() => {
+          setProjects(projectsData);
+        }, 1000); // Append after 1s
+      }
 
-      if (projectsData.length > 0) {
+      if (initialProjects.length > 0) {
         const pipelinesData = await projectsAPI.getPipelines(
-          projectsData[0].id
+          initialProjects[0].id
         );
         setRecentPipelines(pipelinesData || []);
       }

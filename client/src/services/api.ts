@@ -77,4 +77,14 @@ export const projectsAPI = {
     api.post(`/api/projects/${projectId}/jobs/${jobId}/play`).then((res) => res.data),
 };
 
+export async function triggerPipeline(projectId: number, branch: string, variables?: Record<string, string>) {
+  const res = await fetch(`/api/projects/${projectId}/trigger-pipeline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ branch, variables }),
+  });
+  if (!res.ok) throw new Error('Failed to trigger pipeline');
+  return res.json();
+}
+
 export default api;
