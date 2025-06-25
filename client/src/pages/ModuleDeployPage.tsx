@@ -48,8 +48,9 @@ export const ModuleDeployPage: React.FC = () => {
   const [pipelinesLoading, setPipelinesLoading] = useState(false);
   const [pipelineJobs, setPipelineJobs] = useState<Record<number, Job[]>>({});
   const [playingJobIds, setPlayingJobIds] = useState<Set<number>>(new Set());
-  const [playingGroupJob, setPlayingGroupJob] = useState<string | null>(null);
+  const [playingGroupJob, setPlayingGroupJob] = useState<{ [groupBranchKey: string]: string | null }>({});
   const pollingIntervals = useRef<{ [pipelineId: number]: NodeJS.Timeout }>({});
+  const [branchesLoading, setBranchesLoading] = useState(false);
 
   useEffect(() => {
     fetch(GROUPS_STORAGE_URL)
@@ -72,18 +73,23 @@ export const ModuleDeployPage: React.FC = () => {
       : [];
   }, [selectedGroupId, groups, projects]);
 
-  // Fetch branches for the first project in the group when group changes
+  // Fetch branches for the first project in the group when group changes or branches are missing
   useEffect(() => {
     if (!selectedGroupId) return;
     const group = groups.find((g) => g.id === selectedGroupId);
     if (!group || group.projectIds.length === 0) return;
     const firstProjectId = group.projectIds[0];
-    projectsAPI.getBranches(firstProjectId).then((branches) => {
-      setProjects((prev) =>
-        prev.map((p) => (p.id === firstProjectId ? { ...p, branches } : p))
-      );
-    });
-  }, [selectedGroupId, groups]);
+    const firstProject = projects.find((p) => p.id === firstProjectId);
+    if (!firstProject || !firstProject.branches || firstProject.branches.length === 0) {
+      setBranchesLoading(true);
+      projectsAPI.getBranches(firstProjectId).then((branches) => {
+        setProjects((prev) =>
+          prev.map((p) => (p.id === firstProjectId ? { ...p, branches } : p))
+        );
+        setBranchesLoading(false);
+      }).catch(() => setBranchesLoading(false));
+    }
+  }, [selectedGroupId, groups, projects]);
 
   // Fetch history on mount and after new deploy
   const fetchHistory = async () => {
@@ -172,12 +178,36 @@ export const ModuleDeployPage: React.FC = () => {
     return byDate;
   }, [allPipelines, projectIdToGroupName, selectedGroupId, selectedGroup, bulkDeployBranch]);
 
-  // Fetch jobs for pipelines with status 'manual' or 'waiting_for_resource'
+  // Replace the useEffect for polling jobs for manual/running pipelines
   useEffect(() => {
-    const manualPipelines = allPipelines.filter(
-      (p) => p.status === 'manual' || p.status === 'waiting_for_resource'
-    );
-    manualPipelines.forEach((pipeline) => {
+    const interval = setInterval(() => {
+      // Find the latest (active) pipeline for each project
+      const latestPipelineIdByProjectId: { [projectId: number]: number } = {};
+      allPipelines.forEach((pipeline) => {
+        const existing = latestPipelineIdByProjectId[pipeline.project_id];
+        if (!existing || new Date(pipeline.created_at) > new Date(allPipelines.find(p => p.id === existing)?.created_at || 0)) {
+          latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
+        }
+      });
+      // Only poll jobs for the latest pipeline per project that is in manual or waiting state
+      const activeManualPipelines = allPipelines.filter(
+        (p) => latestPipelineIdByProjectId[p.project_id] === p.id && (p.status === 'manual' || p.status === 'waiting_for_resource')
+      );
+      activeManualPipelines.forEach((pipeline) => {
+        projectsAPI.getPipelineJobs(pipeline.project_id, pipeline.id)
+          .then((jobs) => {
+            setPipelineJobs((prev) => ({ ...prev, [pipeline.id]: jobs }));
+          })
+          .catch(() => {});
+      });
+    }, 10000); // 10 seconds
+    return () => clearInterval(interval);
+  }, [allPipelines]);
+
+  // Add after the existing useEffect that fetches jobs for manual/running pipelines
+  useEffect(() => {
+    // Fetch jobs for all pipelines (including successful ones) if not already present
+    allPipelines.forEach((pipeline) => {
       if (!pipelineJobs[pipeline.id]) {
         projectsAPI.getPipelineJobs(pipeline.project_id, pipeline.id)
           .then((jobs) => {
@@ -222,12 +252,26 @@ export const ModuleDeployPage: React.FC = () => {
         setLoading(false);
         return;
       }
-      // 4. Proceed with deployment if all projects have the branch
+      // 4. Only trigger pipeline for the latest (active) pipeline of each project
       await Promise.all(
-        selectedGroup.projectIds.map((projectId) =>
-          projectsAPI.triggerPipeline(projectId, bulkDeployBranch)
-        )
+        selectedGroup.projectIds.map((projectId) => {
+          // Find all pipelines for this project and branch
+          const projectBranchPipelines = allPipelines.filter(p => p.project_id === projectId && p.ref === bulkDeployBranch);
+          if (projectBranchPipelines.length === 0) {
+            // No pipeline exists for this project/branch, allow triggering
+            return projectsAPI.triggerPipeline(projectId, bulkDeployBranch);
+          }
+          // Find the latest pipeline for this project/branch
+          const latestPipeline = projectBranchPipelines.reduce((latest, p) => new Date(p.created_at) > new Date(latest.created_at) ? p : latest, projectBranchPipelines[0]);
+          // Only trigger if the latest pipeline is in a terminal state
+          if (["success", "failed", "canceled"].includes(latestPipeline.status)) {
+            return projectsAPI.triggerPipeline(projectId, bulkDeployBranch);
+          }
+          // Otherwise, skip triggering for this project
+          return Promise.resolve();
+        })
       );
+      debugger;
       // Record in backend
       await axios.post("/api/bulk-deployments", {
         module: selectedGroup.name,
@@ -308,8 +352,8 @@ export const ModuleDeployPage: React.FC = () => {
   };
 
   // Group-level manual action handler
-  const handlePlayGroupManualJob = async (pipelines: any[], jobName: string) => {
-    setPlayingGroupJob(jobName);
+  const handlePlayGroupManualJob = async (pipelines: any[], jobName: string, groupBranchKey: string) => {
+    setPlayingGroupJob(prev => ({ ...prev, [groupBranchKey]: jobName }));
     try {
       // Find all manual jobs with this name across all pipelines in the group/branch
       const jobsToPlay: { projectId: number; jobId: number; pipelineId: number }[] = [];
@@ -324,10 +368,15 @@ export const ModuleDeployPage: React.FC = () => {
         await projectsAPI.playJob(projectId, jobId);
         await pollJobStatus(projectId, jobId, pipelineId);
       }));
+      // After all jobs are played, refresh job statuses for all affected pipelines
+      await Promise.all(pipelines.map(async (pipeline) => {
+        const jobs = await projectsAPI.getPipelineJobs(pipeline.project_id, pipeline.id);
+        setPipelineJobs(prev => ({ ...prev, [pipeline.id]: jobs }));
+      }));
     } catch (err) {
       // Optionally show error
     } finally {
-      setPlayingGroupJob(null);
+      setPlayingGroupJob(prev => ({ ...prev, [groupBranchKey]: null }));
     }
   };
 
@@ -394,7 +443,7 @@ export const ModuleDeployPage: React.FC = () => {
   return (
     <>
       <AppHeader />
-      <div className="max-w-2xl mx-auto py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 w-full py-8">
         {message && (
           <Message
             type={message.type}
@@ -404,9 +453,8 @@ export const ModuleDeployPage: React.FC = () => {
         )}
         <div className="flex flex-col gap-6">
           <h1 className="text-2xl font-bold mb-4">Module Deployment</h1>
-          {/* Full-width Module Deploy Row */}
-          <div className="relative left-1/2 right-1/2 -mx-[50vw] w-screen px-8 mb-8">
-            <div className="flex w-full gap-x-4">
+          <div className="mb-8">
+            <div className="flex gap-x-4">
               {/* Select Module */}
               <div className="flex flex-col flex-1 min-w-0">
                 <label className="block text-sm font-medium mb-1 whitespace-nowrap">Select Module</label>
@@ -430,9 +478,10 @@ export const ModuleDeployPage: React.FC = () => {
                   className="input w-full"
                   value={bulkDeployBranch}
                   onChange={(e) => setBulkDeployBranch(e.target.value)}
+                  disabled={branchesLoading}
                 >
-                  <option value="">Select branch</option>
-                  {groupBranches.map((branch: { name: string }) => (
+                  <option value="">{branchesLoading ? 'Loading branches...' : 'Select branch'}</option>
+                  {!branchesLoading && groupBranches.map((branch: { name: string }) => (
                     <option key={branch.name} value={branch.name}>
                       {branch.name}
                     </option>
@@ -452,18 +501,21 @@ export const ModuleDeployPage: React.FC = () => {
                     Deploy to Develop
                   </ButtonWithLoader>
                 )}
-                {bulkDeployBranch.startsWith('release/') && (
-                  <ButtonWithLoader
-                    className="btn-primary w-full"
-                    onClick={handleBulkDeploy}
-                    loading={loading}
-                    disabled={!selectedGroupId || !bulkDeployBranch}
-                  >
-                    Deploy to QA
-                  </ButtonWithLoader>
-                )}
               </div>
             </div>
+            {/* Deploy to QA Button in a new row */}
+            {bulkDeployBranch.startsWith('release/') && (
+              <div className="flex mt-4">
+                <ButtonWithLoader
+                  className="w-60 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+                  onClick={handleBulkDeploy}
+                  loading={loading}
+                  disabled={!selectedGroupId || !bulkDeployBranch}
+                >
+                  Deploy to QA
+                </ButtonWithLoader>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -530,44 +582,23 @@ export const ModuleDeployPage: React.FC = () => {
                             <span className="text-blue-700 font-semibold text-lg">{groupName}</span>
                             <span className="text-xs text-blue-500">Branch: {branch}</span>
                             <span className="text-xs text-gray-700">{successCount} Success, {failedCount} Failed, {runningCount} Running, {total} Total</span>
-                            {/* Combined status logic: only show if ALL pipelines have the same deploy status and no pending manual actions */}
-                            {(() => {
-                              // Combined status logic: only show if ALL pipelines have the same deploy status and no pending manual actions
-                              const allDeployedToDevelop = pipelines.every(p =>
-                                (p.ref === "master" || p.ref === "develop") &&
-                                (!pipelineJobs[p.id] || !pipelineJobs[p.id].some(j => j.status === "manual" && j.name === "deploy_to_develop"))
-                              );
-                              const allQADeployed = pipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_qa") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
-                              );
-                              const allStageDeployed = pipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_stage") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_stage")
-                              );
-                              const allProductionDeployed = pipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_production") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_production")
-                              );
-                              let combinedStatus = null;
-                              if (allDeployedToDevelop) combinedStatus = "Deployed to Develop";
-                              else if (allQADeployed) combinedStatus = "QA Deployed";
-                              else if (allStageDeployed) combinedStatus = "Stage Deployed";
-                              else if (allProductionDeployed) combinedStatus = "Production Deployed";
-                              return combinedStatus ? (
-                                <span className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold">
-                                  {combinedStatus}
-                                </span>
-                              ) : null;
-                            })()}
                           </div>
                           <div className="flex items-center gap-2 ml-auto">
                             {/* Group-level Manual Action Buttons */}
                             {(() => {
-                              // Collect all manual jobs by name across all pipelines in this group/branch
+                              // Only consider the latest (active) pipeline for each project for header action button counts
+                              const latestPipelineIdByProjectId: { [projectId: number]: number } = {};
+                              pipelines.forEach((pipeline) => {
+                                const existing = latestPipelineIdByProjectId[pipeline.project_id];
+                                if (!existing || new Date(pipeline.created_at) > new Date(pipelines.find(p => p.id === existing)?.created_at || 0)) {
+                                  latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
+                                }
+                              });
+                              const activePipelines = pipelines.filter(p => latestPipelineIdByProjectId[p.project_id] === p.id);
+                              // Collect all manual jobs by name across all active pipelines in this group/branch
                               const manualJobsByName: Record<string, number> = {};
                               const successManualJobsByName: Record<string, number> = {};
-                              pipelines.forEach(pipeline => {
+                              activePipelines.forEach(pipeline => {
                                 (pipelineJobs[pipeline.id] || []).forEach(job => {
                                   if (job.status === 'manual') {
                                     manualJobsByName[job.name] = (manualJobsByName[job.name] || 0) + 1;
@@ -577,6 +608,11 @@ export const ModuleDeployPage: React.FC = () => {
                                   }
                                 });
                               });
+                              // Define allQADeployed for button enable/disable logic
+                              const allQADeployed = activePipelines.every(p =>
+                                pipelineJobs[p.id]?.some(j => j.status === 'success' && j.name === 'deploy_to_qa') &&
+                                !pipelineJobs[p.id]?.some(j => j.status === 'manual' && j.name === 'deploy_to_qa')
+                              );
                               return (
                                 <>
                                   {/* Success (done) buttons first */}
@@ -591,12 +627,26 @@ export const ModuleDeployPage: React.FC = () => {
                                   ))}
                                   {/* Pending manual action buttons after */}
                                   {Object.entries(manualJobsByName).reverse().filter(([jobName]) => isDeployAction(jobName)).map(([jobName, count]) => {
-                                    const isProcessing = playingGroupJob === jobName;
+                                    // groupBranchKey is unique for each group/date/branch
+                                    const groupBranchKey = `${date}__${groupName}__${branch}`;
+                                    const isProcessing = playingGroupJob[groupBranchKey] === jobName;
+                                    // Only enable Deploy to Stage/Production if allQADeployed is true
+                                    let shouldDisable = isProcessing;
+                                    if (jobName === 'deploy_to_stage') {
+                                      shouldDisable = shouldDisable || !allQADeployed;
+                                    }
+                                    if (jobName === 'deploy_to_production') {
+                                      // Only enable if all active pipelines have both QA and Stage jobs done (success) and no pending manual jobs for those names
+                                      const allQAAndStageDeployed = activePipelines.every(p =>
+                                        !pipelineJobs[p.id]?.some(j => j.status === 'manual' && (j.name === 'deploy_to_qa' || j.name === 'deploy_to_stage'))
+                                      );
+                                      shouldDisable = shouldDisable || !allQAAndStageDeployed;
+                                    }
                                     return (
                                       <button
                                         key={jobName}
-                                        onClick={() => handlePlayGroupManualJob(pipelines, jobName)}
-                                        disabled={isProcessing}
+                                        onClick={() => handlePlayGroupManualJob(activePipelines, jobName, groupBranchKey)}
+                                        disabled={shouldDisable}
                                         className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${isProcessing ? 'bg-blue-400 text-white' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
                                       >
                                         {isProcessing ? 'Executing...' : manualJobLabel(jobName, false) + (count > 1 ? ` (${count})` : '')}
@@ -609,63 +659,90 @@ export const ModuleDeployPage: React.FC = () => {
                           </div>
                         </div>
                         <div className="space-y-2">
-                          {pipelines
-                            .slice()
-                            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                            .map((pipeline) => (
-                              <div key={pipeline.id} className="border border-gray-200 rounded p-2 bg-gray-50 flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium text-gray-900">{pipeline.project_name}</span>
-                                  <StatusBadge status={pipeline.status} />
-                                  <span className="text-xs text-gray-500">#{pipeline.iid}</span>
-                                </div>
-                                <div className="flex items-center gap-2 justify-end ml-auto">
-                                  <a
-                                    href={pipeline.web_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-primary-600 hover:text-primary-700 text-xs"
-                                  >
-                                    View Pipeline
-                                  </a>
-                                  {/* Manual Action Button(s) */}
-                                  {/* Success (done) buttons first */}
-                                  {pipelineJobs[pipeline.id]?.filter(j => j.status === 'success' && isDeployAction(j.name)).reverse().map((job) => (
-                                    <button
-                                      key={job.id + '-success'}
-                                      disabled
-                                      className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold opacity-80 cursor-not-allowed"
-                                    >
-                                      {manualJobLabel(job.name, true)}
-                                    </button>
-                                  ))}
-                                  {/* Pending manual action buttons after */}
-                                  {pipelineJobs[pipeline.id]?.filter(j => j.status === 'manual' && isDeployAction(j.name)).reverse().map((job) => {
-                                    const isProcessing = playingJobIds.has(job.id);
-                                    return (
-                                      <button
-                                        key={job.id}
-                                        onClick={() => handlePlayJob(pipeline.project_id, job.id, pipeline.id)}
-                                        disabled={isProcessing}
-                                        className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${isProcessing ? 'bg-blue-400 text-white' : 'bg-yellow-400 text-black hover:bg-yellow-500'}`}
-                                      >
-                                        {isProcessing ? 'Executing...' : manualJobLabel(job.name, false)}
-                                      </button>
-                                    );
-                                  })}
-                                  {/* Show Deploy to Develop status for master/develop branch if no manual job */}
-                                  {(pipeline.ref === "master" || pipeline.ref === "develop") &&
-                                    (!pipelineJobs[pipeline.id] || !pipelineJobs[pipeline.id].some(j => j.status === "manual" && j.name === "deploy_to_develop")) && (
-                                      <button
-                                        className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold opacity-80 cursor-not-allowed"
-                                        disabled
-                                      >
-                                        Deployed to Develop
-                                      </button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
+                          {/* Show all pipelines in this group, sorted by created_at descending, no project grouping */}
+                           <>
+                           {(() => {
+                             // Find the latest pipeline id for each project
+                             const latestPipelineIdByProjectId: { [projectId: number]: number } = {};
+                             pipelines.forEach((pipeline) => {
+                               const existing = latestPipelineIdByProjectId[pipeline.project_id];
+                               if (!existing || new Date(pipeline.created_at) > new Date(pipelines.find(p => p.id === existing)?.created_at || 0)) {
+                                 latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
+                               }
+                             });
+                             const sortedPipelines = pipelines.slice().sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                             return sortedPipelines.map((pipeline) => {
+                               const isLatestForProject = pipeline.id === latestPipelineIdByProjectId[pipeline.project_id];
+                               return (
+                                 <div
+                                   key={pipeline.id}
+                                   className={`border border-gray-200 rounded p-2 flex items-center justify-between ${isLatestForProject ? 'bg-gray-50' : 'bg-gray-100 opacity-60'}`}
+                                 >
+                                   <div className="flex items-center gap-2">
+                                     <span className="font-medium text-gray-900">{pipeline.project_name}</span>
+                                     <StatusBadge status={pipeline.status} />
+                                     <span className="text-xs text-gray-500">#{pipeline.iid}</span>
+                                   </div>
+                                   <div className="flex items-center gap-2 justify-end ml-auto">
+                                     <a
+                                       href={pipeline.web_url}
+                                       target="_blank"
+                                       rel="noopener noreferrer"
+                                       className="text-primary-600 hover:text-primary-700 text-xs"
+                                     >
+                                       View Pipeline
+                                     </a>
+                                     {/* Manual Action Button(s) */}
+                                     {isLatestForProject && (() => {
+                                       // Always show success (done) buttons for deploy jobs for active pipelines
+                                       const successButtons = pipelineJobs[pipeline.id]?.filter(j => j.status === 'success' && isDeployAction(j.name)).reverse().map((job) => (
+                                         <button
+                                           key={job.id + '-success'}
+                                           disabled
+                                           className={`ml-2 px-2 py-1 bg-green-500 text-white text-xs rounded font-semibold opacity-80 cursor-not-allowed`}
+                                         >
+                                           {manualJobLabel(job.name, true)}
+                                         </button>
+                                       ));
+                                       // Always show pending manual action buttons for jobs with status 'manual'
+                                       const qaDeployed = pipelineJobs[pipeline.id]?.some(j => j.status === 'success' && j.name === 'deploy_to_qa') &&
+                                         !pipelineJobs[pipeline.id]?.some(j => j.status === 'manual' && j.name === 'deploy_to_qa');
+                                       const manualButtons = pipelineJobs[pipeline.id]?.filter(j => j.status === 'manual' && isDeployAction(j.name)).reverse().map((job) => {
+                                         let shouldDisable = playingJobIds.has(job.id);
+                                         let buttonClass = 'bg-yellow-400 text-black hover:bg-yellow-500';
+                                         if (job.name === 'deploy_to_stage' || job.name === 'deploy_to_production') {
+                                           shouldDisable = shouldDisable || !qaDeployed;
+                                         }
+                                         if (shouldDisable && playingJobIds.has(job.id)) buttonClass = 'bg-blue-400 text-white';
+                                         return (
+                                           <button
+                                             key={job.id}
+                                             onClick={() => handlePlayJob(pipeline.project_id, job.id, pipeline.id)}
+                                             disabled={shouldDisable}
+                                             className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${buttonClass}`}
+                                           >
+                                             {shouldDisable && playingJobIds.has(job.id) ? 'Executing...' : manualJobLabel(job.name, false)}
+                                           </button>
+                                         );
+                                       });
+                                       return <>{successButtons}{manualButtons}</>;
+                                     })()}
+                                     {/* Show Deploy to Develop status for master/develop branch if no manual job */}
+                                     {(pipeline.ref === "master" || pipeline.ref === "develop") &&
+                                       (!pipelineJobs[pipeline.id] || !pipelineJobs[pipeline.id].some(j => j.status === "manual" && j.name === "deploy_to_develop")) && (
+                                         <button
+                                           className={`ml-2 px-2 py-1 ${isLatestForProject ? 'bg-green-500 text-white' : 'bg-gray-400 text-white'} text-xs rounded font-semibold opacity-80 cursor-not-allowed`}
+                                           disabled
+                                         >
+                                           Deployed to Develop
+                                         </button>
+                                     )}
+                                   </div>
+                                 </div>
+                               );
+                             });
+                           })()}
+                           </>
                         </div>
                       </div>
                     );

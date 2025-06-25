@@ -23,6 +23,7 @@ export const ModuleReleasePage: React.FC = () => {
   } | null>(null);
   const [branches, setBranches] = useState<any[]>([]);
   const [sourceBranch, setSourceBranch] = useState("");
+  const [branchesLoading, setBranchesLoading] = useState(false);
 
   useEffect(() => {
     fetch(GROUPS_STORAGE_URL)
@@ -47,10 +48,12 @@ export const ModuleReleasePage: React.FC = () => {
       return;
     }
     const firstProjectId = group.projectIds[0];
+    setBranchesLoading(true);
     projectsAPI.getBranches(firstProjectId).then((branches) => {
       setBranches(branches);
       if (branches.length > 0) setSourceBranch(branches[0].name);
-    });
+      setBranchesLoading(false);
+    }).catch(() => setBranchesLoading(false));
   }, [selectedGroupId, groups]);
 
   const handleBulkCreateReleaseBranch = async () => {
@@ -112,22 +115,22 @@ export const ModuleReleasePage: React.FC = () => {
               ))}
             </select>
           </div>
-          {branches.length > 0 && (
-            <div className="mb-4">
-              <label className="block mb-2 font-medium">Source Branch</label>
-              <select
-                className="input"
-                value={sourceBranch}
-                onChange={(e) => setSourceBranch(e.target.value)}
-              >
-                {branches.map((branch) => (
-                  <option key={branch.name} value={branch.name}>
-                    {branch.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="mb-4">
+            <label className="block mb-2 font-medium">Source Branch</label>
+            <select
+              className="input"
+              value={sourceBranch}
+              onChange={(e) => setSourceBranch(e.target.value)}
+              disabled={branchesLoading}
+            >
+              <option value="">{branchesLoading ? 'Loading branches...' : 'Select branch'}</option>
+              {!branchesLoading && branches.map((branch) => (
+                <option key={branch.name} value={branch.name}>
+                  {branch.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <ModuleReleaseMenu
             releaseBranchName={releaseBranchName}
             setReleaseBranchName={setReleaseBranchName}

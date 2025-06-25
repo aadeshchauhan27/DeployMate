@@ -17,7 +17,7 @@ export const ModuleReleaseMenu: React.FC<Props> = ({
   disabled,
 }) => (
   <div className="mb-4">
-    <h2 className="font-semibold mb-2">Module Create Release Branch</h2>
+    <h2 className="font-semibold mb-2">Release Branch Name</h2>
     <input
       className="input mb-2"
       type="text"
