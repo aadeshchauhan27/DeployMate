@@ -8,6 +8,7 @@ interface Props {
   onBulkDeploy: () => void;
   loading: boolean;
   disabled?: boolean;
+  compact?: boolean;
 }
 
 export const ModuleDeployMenu: React.FC<Props> = ({
@@ -17,10 +18,50 @@ export const ModuleDeployMenu: React.FC<Props> = ({
   onBulkDeploy,
   loading,
   disabled,
+  compact = false,
 }) => {
   // Helper to check branch type
   const isReleaseBranch = bulkDeployBranch.startsWith('release/');
   const isDevelopBranch = bulkDeployBranch === 'develop' || bulkDeployBranch === 'master';
+
+  if (compact) {
+    return (
+      <div className="flex items-end gap-2">
+        <select
+          className="input px-2 py-1 text-sm min-w-[140px] max-w-[180px]"
+          value={bulkDeployBranch}
+          onChange={(e) => setBulkDeployBranch(e.target.value)}
+        >
+          <option value="">Select branch</option>
+          {groupBranches.map((branch) => (
+            <option key={branch.name} value={branch.name}>
+              {branch.name}
+            </option>
+          ))}
+        </select>
+        {isDevelopBranch && (
+          <ButtonWithLoader
+            className="btn-primary px-3 py-1 text-sm"
+            onClick={onBulkDeploy}
+            loading={loading}
+            disabled={disabled || !bulkDeployBranch}
+          >
+            Deploy to Develop
+          </ButtonWithLoader>
+        )}
+        {isReleaseBranch && (
+          <ButtonWithLoader
+            className="btn-primary px-3 py-1 text-sm"
+            onClick={onBulkDeploy}
+            loading={loading}
+            disabled={disabled || !bulkDeployBranch}
+          >
+            Deploy to QA
+          </ButtonWithLoader>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>

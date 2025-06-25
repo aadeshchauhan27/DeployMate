@@ -200,23 +200,6 @@ export const DashboardPage: React.FC = () => {
               />
             </div>
             <button
-              onClick={testGitLabAPI}
-              disabled={testing}
-              className="btn-secondary flex items-center space-x-2"
-            >
-              {testing ? (
-                <>
-                  <LoadingSpinner size="sm" />
-                  <span>Testing...</span>
-                </>
-              ) : (
-                <>
-                  <TestTube className="w-4 h-4" />
-                  <span>Test API</span>
-                </>
-              )}
-            </button>
-            <button
               onClick={loadData}
               className="btn-secondary flex items-center space-x-2"
             >

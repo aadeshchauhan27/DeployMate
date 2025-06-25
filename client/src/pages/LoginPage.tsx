@@ -93,7 +93,7 @@ export const LoginPage: React.FC = () => {
         {/* Footer */}
         <div className="text-center mt-12">
           <p className="text-gray-500">
-            © 2024 DeployMate. Built with ❤️ for developers.
+            © 2025 DeployMate. Built with ❤️ for developers.
           </p>
         </div>
       </div>
