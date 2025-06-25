@@ -96,7 +96,7 @@ export const ModuleDeployPage: React.FC = () => {
   const fetchHistory = async () => {
     setHistoryLoading(true);
     try {
-      await new Promise(res => setTimeout(res, 5000)); // Artificial delay for loader visibility (increased to 5s)
+      await new Promise(res => setTimeout(res, 3000)); // Artificial delay for loader visibility (reduced to 3s)
       const res = await axios.get("/api/bulk-deployments");
       setHistory(res.data);
     } finally {
@@ -237,7 +237,7 @@ export const ModuleDeployPage: React.FC = () => {
           })
           .catch(() => {});
       });
-    }, 3000); // 3 seconds
+    }, 1000); // 1 second
     return () => clearInterval(interval);
   }, [allPipelines]);
 
@@ -632,31 +632,20 @@ export const ModuleDeployPage: React.FC = () => {
               !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
             );
             const allStageDeployed = activePipelines.length > 0 && activePipelines.every(p =>
-              pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_stage") &&
-              !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_stage")
+              pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_staging") &&
+              !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_staging")
             );
             const allProdDeployed = activePipelines.length > 0 && activePipelines.every(p =>
               pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_production") &&
               !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_production")
             );
-
+            // Count how many pipelines passed each stage
+            const qaPassedCount = activePipelines.filter(p => pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_qa")).length;
+            const stagePassedCount = activePipelines.filter(p => pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_staging")).length;
+            const prodPassedCount = activePipelines.filter(p => pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_production")).length;
             return (
               <>
-                {allQADeployed && (
-                  <span className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold">
-                    QA Deployed ({activePipelines.length})
-                  </span>
-                )}
-                {allStageDeployed && (
-                  <span className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold">
-                    Staging Deployed ({activePipelines.length})
-                  </span>
-                )}
-                {allProdDeployed && (
-                  <span className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold">
-                    Production Deployed ({activePipelines.length})
-                  </span>
-                )}
+                
               </>
             );
           })()}
@@ -729,8 +718,8 @@ export const ModuleDeployPage: React.FC = () => {
                                 !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
                               );
                               const allStageDeployed = activePipelines.length > 0 && activePipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_stage") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_stage")
+                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_staging") &&
+                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_staging")
                               );
                               const allProdDeployed = activePipelines.length > 0 && activePipelines.every(p =>
                                 pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_production") &&
@@ -753,14 +742,16 @@ export const ModuleDeployPage: React.FC = () => {
                                     // groupBranchKey is unique for each group/date/branch
                                     const groupBranchKey = `${date}__${groupName}__${branch}`;
                                     const isProcessing = playingGroupJob[groupBranchKey] === jobName;
+                                    // Check if any job for this action is running in active pipelines
+                                    const isRunning = activePipelines.some(pipeline => (pipelineJobs[pipeline.id] || []).some(j => j.name === jobName && j.status === 'running'));
                                     // Only enable Deploy to Stage/Production if allQADeployed is true
                                     let shouldDisable = isProcessing;
-                                    if (jobName === 'deploy_to_stage') {
-                                      shouldDisable = shouldDisable || !allStageDeployed;
+                                    if (jobName === 'deploy_to_staging') {
+                                      shouldDisable = shouldDisable || !allQADeployed;
                                     }
                                     if (jobName === 'deploy_to_production') {
                                       const allQAAndStageDeployed = activePipelines.every(p =>
-                                        !pipelineJobs[p.id]?.some(j => j.status === 'manual' && (j.name === 'deploy_to_qa' || j.name === 'deploy_to_stage'))
+                                        !pipelineJobs[p.id]?.some(j => j.status === 'manual' && (j.name === 'deploy_to_qa' || j.name === 'deploy_to_staging'))
                                       );
                                       shouldDisable = shouldDisable || !allQAAndStageDeployed;
                                     }
@@ -769,9 +760,11 @@ export const ModuleDeployPage: React.FC = () => {
                                         key={jobName}
                                         onClick={() => handlePlayGroupManualJob(activePipelines, jobName, groupBranchKey)}
                                         disabled={shouldDisable}
-                                        className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${isProcessing ? 'bg-blue-400 text-white' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
+                                        className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${(isProcessing || isRunning) ? 'bg-blue-400 text-white' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
                                       >
-                                        {isProcessing ? 'Deploying' : manualJobLabel(jobName, false) + (count > 1 ? ` (${count})` : '')}
+                                        {(isProcessing || isRunning)
+                                          ? `Deploying to ${jobName === 'deploy_to_qa' ? 'QA' : jobName === 'deploy_to_staging' ? 'Staging' : jobName === 'deploy_to_production' ? 'Production' : ''}`
+                                          : manualJobLabel(jobName, false) + (count > 1 ? ` (${count})` : '')}
                                       </button>
                                     );
                                   })}
@@ -814,51 +807,7 @@ export const ModuleDeployPage: React.FC = () => {
                                      >
                                        View Pipeline
                                      </a>
-                                     {/* Manual Action Button(s) */}
-                                     {isLatestForProject && (() => {
-                                       // Always show success (done) buttons for deploy jobs for active pipelines
-                                       const successButtons = pipelineJobs[pipeline.id]?.filter(j => j.status === 'success' && isDeployAction(j.name)).reverse().map((job) => (
-                                         <button
-                                           key={job.id + '-success'}
-                                           disabled
-                                           className={`ml-2 px-2 py-1 bg-green-500 text-white text-xs rounded font-semibold opacity-80 cursor-not-allowed`}
-                                         >
-                                           {manualJobLabel(job.name, true)}
-                                         </button>
-                                       ));
-                                       // Always show pending manual action buttons for jobs with status 'manual'
-                                       const qaDeployed = pipelineJobs[pipeline.id]?.some(j => j.status === 'success' && j.name === 'deploy_to_qa') &&
-                                         !pipelineJobs[pipeline.id]?.some(j => j.status === 'manual' && j.name === 'deploy_to_qa');
-                                       const manualButtons = pipelineJobs[pipeline.id]?.filter(j => j.status === 'manual' && isDeployAction(j.name)).reverse().map((job) => {
-                                         let shouldDisable = true; // Always disabled for project-level buttons
-                                         let buttonClass = 'bg-yellow-400 text-black hover:bg-yellow-500';
-                                         if (job.name === 'deploy_to_stage' || job.name === 'deploy_to_production') {
-                                           shouldDisable = true;
-                                         }
-                                         if (shouldDisable && playingJobIds.has(job.id)) buttonClass = 'bg-blue-400 text-white';
-                                         return (
-                                           <button
-                                             key={job.id}
-                                             onClick={() => {}}
-                                             disabled={true}
-                                             className={`ml-2 px-2 py-1 text-xs rounded font-semibold opacity-60 cursor-not-allowed ${buttonClass}`}
-                                           >
-                                             {playingJobIds.has(job.id) ? 'Deploying' : manualJobLabel(job.name, false)}
-                                           </button>
-                                         );
-                                       });
-                                       return <>{successButtons}{manualButtons}</>;
-                                     })()}
-                                     {/* Show Deploy to Develop status for master/develop branch if no manual job */}
-                                     {(pipeline.ref === "master" || pipeline.ref === "develop") &&
-                                       (!pipelineJobs[pipeline.id] || !pipelineJobs[pipeline.id].some(j => j.status === "manual" && j.name === "deploy_to_develop")) && (
-                                         <button
-                                           className={`ml-2 px-2 py-1 ${isLatestForProject ? 'bg-green-500 text-white' : 'bg-gray-400 text-white'} text-xs rounded font-semibold opacity-80 cursor-not-allowed`}
-                                           disabled
-                                         >
-                                           Deployed to Develop
-                                         </button>
-                                     )}
+                                     {/* Manual Action Buttons hidden for individual project pipelines as requested */}
                                    </div>
                                  </div>
                                );
