@@ -53,6 +53,8 @@ export const ModuleDeployPage: React.FC = () => {
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [recentlyTriggeredPipelineId, setRecentlyTriggeredPipelineId] = useState<number | null>(null);
   const [clusterSwitchPipelines, setClusterSwitchPipelines] = useState<any[]>([]);
+  const [showNoDeployments, setShowNoDeployments] = useState(false);
+  const [deployingEnvByGroup, setDeployingEnvByGroup] = useState<{ [groupBranchKey: string]: string | null }>({});
 
   useEffect(() => {
     fetch(GROUPS_STORAGE_URL)
@@ -342,8 +344,9 @@ export const ModuleDeployPage: React.FC = () => {
   };
 
   // Environment deploy handler
-  const handleEnvDeploy = async (env: string) => {
+  const handleEnvDeploy = async (env: string, groupBranchKey: string) => {
     if (!bulkDeployBranch.trim() || !selectedGroup || selectedGroup.projectIds.length === 0) return;
+    setDeployingEnvByGroup(prev => ({ ...prev, [groupBranchKey]: env }));
     setEnvStatus((prev) => ({ ...prev, [env]: 'deploying' }));
     try {
       // Pass environment as a variable object
@@ -353,6 +356,8 @@ export const ModuleDeployPage: React.FC = () => {
       setEnvStatus((prev) => ({ ...prev, [env]: 'success' }));
     } catch (err) {
       setEnvStatus((prev) => ({ ...prev, [env]: 'failed' }));
+    } finally {
+      setDeployingEnvByGroup(prev => ({ ...prev, [groupBranchKey]: null }));
     }
   };
 
@@ -527,6 +532,16 @@ export const ModuleDeployPage: React.FC = () => {
     }
     setClusterSwitchPipelines(prev => [...newPipelines, ...prev]);
   };
+
+  useEffect(() => {
+    if (!historyLoading && selectedGroup && Object.entries(groupedByDateGroupBranch).length === 0) {
+      setShowNoDeployments(false);
+      const timeout = setTimeout(() => setShowNoDeployments(true), 1500);
+      return () => clearTimeout(timeout);
+    } else {
+      setShowNoDeployments(false);
+    }
+  }, [historyLoading, selectedGroup, groupedByDateGroupBranch]);
 
   return (
     <>
@@ -721,22 +736,83 @@ export const ModuleDeployPage: React.FC = () => {
           </div>
         )}
         {historyLoading ? (
-          <div className="flex justify-center py-8">
-            <LoadingSpinner size="md" />
+          <div className="space-y-8 py-8">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="border-2 border-blue-200 rounded-lg p-4 bg-blue-50 animate-pulse">
+                <div className="mb-2 flex items-center gap-4 flex-wrap justify-between">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="h-6 w-40 bg-gray-200 rounded" />
+                    <div className="h-4 w-24 bg-gray-200 rounded" />
+                    <div className="h-4 w-32 bg-gray-200 rounded" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-8 w-32 bg-gray-200 rounded" />
+                    <div className="h-8 w-32 bg-gray-200 rounded" />
+                  </div>
+                </div>
+                <div className="space-y-2 mt-4">
+                  {[1, 2].map((j) => (
+                    <div key={j} className="border border-gray-200 rounded p-2 flex items-center justify-between bg-gray-100">
+                      <div className="flex items-center gap-2">
+                        <div className="h-4 w-24 bg-gray-200 rounded" />
+                        <div className="h-4 w-12 bg-gray-200 rounded" />
+                        <div className="h-4 w-10 bg-gray-200 rounded" />
+                      </div>
+                      <div className="flex items-center gap-2 justify-end ml-auto">
+                        <div className="h-4 w-20 bg-gray-200 rounded" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         ) : (
           <div className="space-y-12">
             {!selectedGroup && (
               <div className="text-gray-500">Please select a module to view its deployment history.</div>
             )}
-            {selectedGroup && Object.entries(groupedByDateGroupBranch).length === 0 && (
+            {selectedGroup && Object.entries(groupedByDateGroupBranch).length === 0 && !showNoDeployments && (
+              <div className="space-y-8 py-8">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="border-2 border-blue-200 rounded-lg p-4 bg-blue-50 animate-pulse">
+                    <div className="mb-2 flex items-center gap-4 flex-wrap justify-between">
+                      <div className="flex items-center gap-4 flex-wrap">
+                        <div className="h-6 w-40 bg-gray-200 rounded" />
+                        <div className="h-4 w-24 bg-gray-200 rounded" />
+                        <div className="h-4 w-32 bg-gray-200 rounded" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-8 w-32 bg-gray-200 rounded" />
+                        <div className="h-8 w-32 bg-gray-200 rounded" />
+                      </div>
+                    </div>
+                    <div className="space-y-2 mt-4">
+                      {[1, 2].map((j) => (
+                        <div key={j} className="border border-gray-200 rounded p-2 flex items-center justify-between bg-gray-100">
+                          <div className="flex items-center gap-2">
+                            <div className="h-4 w-24 bg-gray-200 rounded" />
+                            <div className="h-4 w-12 bg-gray-200 rounded" />
+                            <div className="h-4 w-10 bg-gray-200 rounded" />
+                          </div>
+                          <div className="flex items-center gap-2 justify-end ml-auto">
+                            <div className="h-4 w-20 bg-gray-200 rounded" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {selectedGroup && Object.entries(groupedByDateGroupBranch).length === 0 && showNoDeployments && (
               <div className="text-gray-500">
                 {bulkDeployBranch 
                   ? `No deployments found for branch "${bulkDeployBranch}" in this Module.`
                   : 'No deployments found for this Module.'}
               </div>
             )}
-            {Object.entries(groupedByDateGroupBranch).sort((a, b) => b[0].localeCompare(a[0])).map(([date, groupBranchGroups]) => (
+            {selectedGroup && Object.entries(groupedByDateGroupBranch).sort((a, b) => b[0].localeCompare(a[0])).map(([date, groupBranchGroups]) => (
               <div key={date} className="mb-8">
                 <div className="text-lg font-bold mb-4">{date}</div>
                 <div className="space-y-8">
@@ -839,15 +915,18 @@ export const ModuleDeployPage: React.FC = () => {
                               } else {
                                 colorClass = 'bg-gray-200 text-gray-500 cursor-not-allowed';
                               }
+                              const groupBranchKey = `${date}__${groupName}__${branch}`;
+                              const isDeploying = deployingEnvByGroup[groupBranchKey] === env;
                               return (
                                 <button
                                   key={env}
-                                  className={`px-4 py-1 rounded font-bold text-xs transition ${colorClass} ${isRunning ? 'opacity-60 cursor-not-allowed' : ''}`}
-                                  disabled={!hasManual || isRunning || isSuccess}
+                                  className={`px-4 py-1 rounded font-bold text-xs transition ${colorClass} ${(isRunning || isDeploying) ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                  disabled={!hasManual || isRunning || isSuccess || isDeploying}
                                   onClick={() => {
-                                    if (!hasManual || isRunning || isSuccess) return;
-                                    const groupBranchKey = `${date}__${groupName}__${branch}`;
-                                    handlePlayGroupManualJob(activePipelines, jobName, groupBranchKey);
+                                    if (!hasManual || isRunning || isSuccess || isDeploying) return;
+                                    setDeployingEnvByGroup(prev => ({ ...prev, [groupBranchKey]: env }));
+                                    handlePlayGroupManualJob(activePipelines, jobName, groupBranchKey)
+                                      .finally(() => setDeployingEnvByGroup(prev => ({ ...prev, [groupBranchKey]: null })));
                                   }}
                                 >
                                   {env === 'qa' ? 'QA' : env === 'staging' ? 'STAGING' : 'PRODUCTION'}
