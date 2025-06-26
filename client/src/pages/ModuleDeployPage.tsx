@@ -55,6 +55,8 @@ export const ModuleDeployPage: React.FC = () => {
   const [clusterSwitchPipelines, setClusterSwitchPipelines] = useState<any[]>([]);
   const [showNoDeployments, setShowNoDeployments] = useState(false);
   const [deployingEnvByGroup, setDeployingEnvByGroup] = useState<{ [groupBranchKey: string]: string | null }>({});
+  const [clusterSwitchLoading, setClusterSwitchLoading] = useState(false);
+  const [albChangeLoading, setAlbChangeLoading] = useState(false);
 
   useEffect(() => {
     fetch(GROUPS_STORAGE_URL)
@@ -94,16 +96,32 @@ export const ModuleDeployPage: React.FC = () => {
     const firstProject = projects.find((p) => p.id === firstProjectId);
     if (!firstProject || !firstProject.branches || firstProject.branches.length === 0) {
       setBranchesLoading(true);
+      console.log('Branch loading started for project', firstProjectId);
+      let didTimeout = false;
+      const timeout = setTimeout(() => {
+        didTimeout = true;
+        setBranchesLoading(false);
+        setMessage({ type: 'error', text: 'Branch loading timed out. Please try again.' });
+        console.log('Branch loading timed out for project', firstProjectId);
+      }, 10000); // 10 seconds
       projectsAPI.getBranches(firstProjectId)
         .then((branches) => {
-          setProjects((prev) =>
-            prev.map((p) => (p.id === firstProjectId ? { ...p, branches } : p))
-          );
-          setBranchesLoading(false);
+          if (!didTimeout) {
+            setProjects((prev) =>
+              prev.map((p) => (p.id === firstProjectId ? { ...p, branches } : p))
+            );
+            setBranchesLoading(false);
+            clearTimeout(timeout);
+            console.log('Branch loading finished for project', firstProjectId);
+          }
         })
         .catch((err) => {
-          setBranchesLoading(false);
-          setMessage({ type: 'error', text: 'Failed to fetch branches. ' + (typeof err === 'object' && err && 'message' in err ? (err as any).message : 'Network error.') });
+          if (!didTimeout) {
+            setBranchesLoading(false);
+            clearTimeout(timeout);
+            setMessage({ type: 'error', text: 'Failed to fetch branches. ' + (typeof err === 'object' && err && 'message' in err ? (err as any).message : 'Network error.') });
+            console.log('Branch loading failed for project', firstProjectId, err);
+          }
         });
     }
   }, [selectedGroupId, groups, projects]);
@@ -500,37 +518,149 @@ export const ModuleDeployPage: React.FC = () => {
       return;
     }
     try {
+      setClusterSwitchLoading(true);
       setLoading(true);
       const pipeline = await triggerPipeline(Number(projectId), 'release/QA', { ENVIRONMENT: 'QA', ACTION: 'cluster_switch' });
-      setAllPipelines(prev => [pipeline, ...prev]);
-      setClusterSwitchPipelines(prev => [pipeline, ...prev]);
-      const jobs = await projectsAPI.getPipelineJobs(pipeline.project_id, pipeline.id);
-      setPipelineJobs(prev => ({ ...prev, [pipeline.id]: jobs }));
-      setRecentlyTriggeredPipelineId(pipeline.id);
+      
+      // Ensure pipeline has required properties for StatusBadge
+      if (!pipeline || typeof pipeline !== 'object') {
+        throw new Error('Invalid pipeline response');
+      }
+      
+      // Add missing properties if they don't exist
+      const normalizedPipeline = {
+        ...pipeline,
+        id: pipeline.id || pipeline.iid || Date.now(),
+        project_id: pipeline.project_id || Number(projectId),
+        status: pipeline.status || 'pending',
+        ref: pipeline.ref || 'release/QA',
+        created_at: pipeline.created_at || new Date().toISOString(),
+        project_name: pipeline.project_name || `Cluster Switch Project ${projectId}`,
+        web_url: pipeline.web_url || '#'
+      };
+      
+      setAllPipelines(prev => [normalizedPipeline, ...prev]);
+      setClusterSwitchPipelines(prev => [normalizedPipeline, ...prev]);
+      
+      try {
+        const jobs = await projectsAPI.getPipelineJobs(normalizedPipeline.project_id, normalizedPipeline.id);
+        setPipelineJobs(prev => ({ ...prev, [normalizedPipeline.id]: jobs }));
+      } catch (jobError) {
+        console.warn('Failed to fetch pipeline jobs:', jobError);
+        // Set empty jobs array as fallback
+        setPipelineJobs(prev => ({ ...prev, [normalizedPipeline.id]: [] }));
+      }
+      
+      setRecentlyTriggeredPipelineId(normalizedPipeline.id);
       setMessage({ type: 'success', text: 'Cluster Switching QA pipeline triggered!' });
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || 'Failed to trigger Cluster Switching QA pipeline' });
     } finally {
       setLoading(false);
+      setClusterSwitchLoading(false);
+    }
+  };
+
+  // Function to trigger pipeline for Change ALB using project ID from .env
+  const handleChangeALB = async () => {
+    const projectId = process.env.REACT_APP_ALB_CHANGE_PROJECT_ID;
+    if (!projectId) {
+      setMessage({ type: 'error', text: 'ALB Change Project ID not set in .env' });
+      return;
+    }
+    try {
+      setAlbChangeLoading(true);
+      setLoading(true);
+      const pipeline = await triggerPipeline(Number(projectId), 'release/QA', { ENVIRONMENT: 'QA', ACTION: 'change_alb' });
+      
+      // Ensure pipeline has required properties for StatusBadge
+      if (!pipeline || typeof pipeline !== 'object') {
+        throw new Error('Invalid pipeline response');
+      }
+      
+      // Add missing properties if they don't exist
+      const normalizedPipeline = {
+        ...pipeline,
+        id: pipeline.id || pipeline.iid || Date.now(),
+        project_id: pipeline.project_id || Number(projectId),
+        status: pipeline.status || 'pending',
+        ref: pipeline.ref || 'release/QA',
+        created_at: pipeline.created_at || new Date().toISOString(),
+        project_name: pipeline.project_name || `ALB Change Project ${projectId}`,
+        web_url: pipeline.web_url || '#'
+      };
+      
+      setAllPipelines(prev => [normalizedPipeline, ...prev]);
+      setClusterSwitchPipelines(prev => [normalizedPipeline, ...prev]);
+      
+      try {
+        const jobs = await projectsAPI.getPipelineJobs(normalizedPipeline.project_id, normalizedPipeline.id);
+        setPipelineJobs(prev => ({ ...prev, [normalizedPipeline.id]: jobs }));
+      } catch (jobError) {
+        console.warn('Failed to fetch pipeline jobs:', jobError);
+        // Set empty jobs array as fallback
+        setPipelineJobs(prev => ({ ...prev, [normalizedPipeline.id]: [] }));
+      }
+      
+      setRecentlyTriggeredPipelineId(normalizedPipeline.id);
+      setMessage({ type: 'success', text: 'Change ALB pipeline triggered!' });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'Failed to trigger Change ALB pipeline' });
+    } finally {
+      setLoading(false);
+      setAlbChangeLoading(false);
     }
   };
 
   const handleGroupEnvAction = async (action: 'cluster' | 'alb') => {
+    if (action === 'alb') {
+      setAlbChangeLoading(true);
+    }
     const newPipelines: any[] = [];
     for (const pipeline of allPipelines) {
-      const newPipeline = await projectsAPI.triggerPipeline(pipeline.project_id, pipeline.ref, {
-        ENVIRONMENT: 'QA', // or dynamically determine env if needed
-        ACTION: action === 'cluster' ? 'cluster_switch' : 'change_alb',
-      });
-      newPipelines.push(newPipeline);
-      setAllPipelines(prev => [newPipeline, ...prev]);
-    }
-    // Set jobs for each new pipeline in a for-await-of loop
-    for (const newPipeline of newPipelines) {
-      const jobs = await projectsAPI.getPipelineJobs(newPipeline.project_id, newPipeline.id);
-      setPipelineJobs(prev => ({ ...prev, [newPipeline.id]: jobs }));
+      try {
+        const newPipeline = await projectsAPI.triggerPipeline(pipeline.project_id, pipeline.ref, {
+          ENVIRONMENT: 'QA', // or dynamically determine env if needed
+          ACTION: action === 'cluster' ? 'cluster_switch' : 'change_alb',
+        });
+        
+        // Ensure pipeline has required properties for StatusBadge
+        if (!newPipeline || typeof newPipeline !== 'object') {
+          console.warn('Invalid pipeline response for project', pipeline.project_id);
+          continue;
+        }
+        
+        // Add missing properties if they don't exist
+        const normalizedPipeline = {
+          ...newPipeline,
+          id: newPipeline.id || newPipeline.iid || Date.now(),
+          project_id: newPipeline.project_id || pipeline.project_id,
+          status: newPipeline.status || 'pending',
+          ref: newPipeline.ref || pipeline.ref,
+          created_at: newPipeline.created_at || new Date().toISOString(),
+          project_name: newPipeline.project_name || pipeline.project_name,
+          web_url: newPipeline.web_url || '#'
+        };
+        
+        newPipelines.push(normalizedPipeline);
+        setAllPipelines(prev => [normalizedPipeline, ...prev]);
+        
+        try {
+          const jobs = await projectsAPI.getPipelineJobs(normalizedPipeline.project_id, normalizedPipeline.id);
+          setPipelineJobs(prev => ({ ...prev, [normalizedPipeline.id]: jobs }));
+        } catch (jobError) {
+          console.warn('Failed to fetch pipeline jobs for', normalizedPipeline.id, jobError);
+          // Set empty jobs array as fallback
+          setPipelineJobs(prev => ({ ...prev, [normalizedPipeline.id]: [] }));
+        }
+      } catch (error) {
+        console.error('Failed to trigger pipeline for project', pipeline.project_id, error);
+      }
     }
     setClusterSwitchPipelines(prev => [...newPipelines, ...prev]);
+    if (action === 'alb') {
+      setAlbChangeLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -696,45 +826,6 @@ export const ModuleDeployPage: React.FC = () => {
         </div>
         {/* Separator below header */}
         <div className="border-b border-gray-300 mb-4" />
-        {/* Cluster Switch Group */}
-        {clusterSwitchPipelines.length > 0 && (
-          <div className="mb-8">
-            <div className="text-lg font-bold mb-4">Cluster Switch</div>
-            <div className="space-y-8">
-              <div className="border-2 border-blue-400 rounded-lg p-4 bg-blue-50">
-                <div className="mb-2 flex items-center gap-4 flex-wrap justify-between">
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <span className="text-blue-700 font-semibold text-lg">Cluster Switch Pipelines</span>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {clusterSwitchPipelines.map((pipeline) => (
-                    <div
-                      key={pipeline.id}
-                      className={`border border-gray-200 rounded p-2 flex items-center justify-between bg-gray-50`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-gray-900">{pipeline.project_name}</span>
-                        <StatusBadge status={pipeline.status} />
-                        <span className="text-xs text-gray-500">#{pipeline.iid}</span>
-                      </div>
-                      <div className="flex items-center gap-2 justify-end ml-auto">
-                        <a
-                          href={pipeline.web_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary-600 hover:text-primary-700 text-xs"
-                        >
-                          View Pipeline
-                        </a>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
         {historyLoading ? (
           <div className="space-y-8 py-8">
             {[1, 2, 3].map((i) => (
@@ -871,7 +962,11 @@ export const ModuleDeployPage: React.FC = () => {
                                  >
                                    <div className="flex items-center gap-2">
                                      <span className="font-medium text-gray-900">{pipeline.project_name}</span>
-                                     <StatusBadge status={pipeline.status} />
+                                     {pipeline.status && ['running', 'pending', 'success', 'failed', 'canceled', 'skipped', 'error', 'available', 'stopped', 'manual'].includes(pipeline.status) ? (
+                                       <StatusBadge status={pipeline.status} />
+                                     ) : (
+                                       <span className="text-red-500 text-sm">Invalid status: {pipeline.status || 'undefined'}</span>
+                                     )}
                                      <span className="text-xs text-gray-500">#{pipeline.iid}</span>
                                    </div>
                                    <div className="flex items-center gap-2 justify-end ml-auto">
@@ -953,22 +1048,24 @@ export const ModuleDeployPage: React.FC = () => {
                               else if (isStagingGreen) env = 'STAGING';
                               else if (isQAGreen) env = 'QA';
                               const enabled = !!env;
-                              const blueClass = enabled ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed';
-                              const purpleClass = enabled ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed';
+                              const blueClass = enabled && !clusterSwitchLoading ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed';
+                              const purpleClass = enabled && !albChangeLoading ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed';
                               return <>
                                 <ButtonWithLoader
                                   className={`font-bold py-1 px-3 rounded text-xs transition ${blueClass}`}
                                   onClick={handleClusterSwitchQA}
-                                  disabled={!enabled}
+                                  disabled={!enabled || clusterSwitchLoading}
+                                  loading={clusterSwitchLoading}
                                 >
-                                  Cluster Switching {env}
+                                  {clusterSwitchLoading ? 'Cluster Switching...' : `Cluster Switching ${env}`}
                                 </ButtonWithLoader>
                                 <ButtonWithLoader
                                   className={`font-bold py-1 px-3 rounded text-xs transition ${purpleClass}`}
-                                  onClick={() => handleGroupEnvAction('alb')}
-                                  disabled={!enabled}
+                                  onClick={handleChangeALB}
+                                  disabled={!enabled || albChangeLoading}
+                                  loading={albChangeLoading}
                                 >
-                                  Change ALB {env}
+                                  {albChangeLoading ? 'Change ALB...' : `Change ALB ${env}`}
                                 </ButtonWithLoader>
                               </>;
                             })()}

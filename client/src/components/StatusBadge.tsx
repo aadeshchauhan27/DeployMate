@@ -93,12 +93,22 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   const config = statusConfig[status];
   const Icon = config?.icon;
 
+  // If config or Icon is undefined, render a fallback
+  if (!config || !Icon) {
+    return (
+      <span className={`badge-error ${className} flex items-center gap-1`}>
+        <AlertCircle className="w-3 h-3 text-red-600" />
+        {status || "Unknown"}
+      </span>
+    );
+  }
+
   return (
     <span
-      className={`${config?.className} ${className} flex items-center gap-1`}
+      className={`${config.className} ${className} flex items-center gap-1`}
     >
-      <Icon className={`w-3 h-3 ${config?.iconClassName}`} />
-      {config?.label}
+      <Icon className={`w-3 h-3 ${config.iconClassName}`} />
+      {config.label}
     </span>
   );
 };
