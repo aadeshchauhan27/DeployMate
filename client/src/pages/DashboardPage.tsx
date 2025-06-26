@@ -17,6 +17,30 @@ import { Link } from "react-router-dom";
 import { Message } from "../components/Message";
 import { AppHeader } from "../components/AppHeader";
 
+const CACHE_KEY_PROJECTS = 'dashboard_projects_cache';
+const CACHE_KEY_PIPELINES = 'dashboard_pipelines_cache';
+const CACHE_TTL = 60 * 1000; // 1 minute in ms
+
+function getCache(key: string) {
+  try {
+    const cached = localStorage.getItem(key);
+    if (!cached) return null;
+    const { data, timestamp } = JSON.parse(cached);
+    if (Date.now() - timestamp < CACHE_TTL) {
+      return data;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function setCache(key: string, data: any) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
+  } catch {}
+}
+
 export const DashboardPage: React.FC = () => {
   const { user, logout } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -42,21 +66,33 @@ export const DashboardPage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const projectsData = await projectsAPI.getAll();
-      const initialProjects = projectsData.slice(0, 10);
-      setProjects(initialProjects);
+      // Try cache first
+      const cachedProjects = getCache(CACHE_KEY_PROJECTS);
+      let projectsData: Project[];
+      if (cachedProjects) {
+        projectsData = cachedProjects;
+        setProjects(projectsData);
+      } else {
+        projectsData = await projectsAPI.getAll();
+        setProjects(projectsData.slice(0, 10));
+        setCache(CACHE_KEY_PROJECTS, projectsData);
+      }
       // Optionally, fetch and append the rest in the background
       if (projectsData.length > 10) {
         setTimeout(() => {
           setProjects(projectsData);
-        }, 1000); // Append after 1s
+        }, 1000);
       }
-
-      if (initialProjects.length > 0) {
-        const pipelinesData = await projectsAPI.getPipelines(
-          initialProjects[0].id
-        );
-        setRecentPipelines(pipelinesData || []);
+      // Pipelines cache
+      if (projectsData.length > 0) {
+        const cachedPipelines = getCache(CACHE_KEY_PIPELINES);
+        if (cachedPipelines && cachedPipelines.projectId === projectsData[0].id) {
+          setRecentPipelines(cachedPipelines.pipelines);
+        } else {
+          const pipelinesData = await projectsAPI.getPipelines(projectsData[0].id);
+          setRecentPipelines(pipelinesData || []);
+          setCache(CACHE_KEY_PIPELINES, { projectId: projectsData[0].id, pipelines: pipelinesData });
+        }
       }
     } catch (error) {
       console.error("Failed to load dashboard data:", error);

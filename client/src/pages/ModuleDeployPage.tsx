@@ -52,13 +52,22 @@ export const ModuleDeployPage: React.FC = () => {
   const pollingIntervals = useRef<{ [pipelineId: number]: NodeJS.Timeout }>({});
   const [branchesLoading, setBranchesLoading] = useState(false);
   const [recentlyTriggeredPipelineId, setRecentlyTriggeredPipelineId] = useState<number | null>(null);
+  const [clusterSwitchPipelines, setClusterSwitchPipelines] = useState<any[]>([]);
 
   useEffect(() => {
     fetch(GROUPS_STORAGE_URL)
       .then((res) => res.json())
       .then((data) => setGroups(data))
-      .catch(() => setGroups([]));
-    projectsAPI.getAll().then(setProjects);
+      .catch((err) => {
+        setGroups([]);
+        setMessage({ type: 'error', text: 'Failed to fetch groups. ' + (typeof err === 'object' && err && 'message' in err ? (err as any).message : 'Network error.') });
+      });
+    projectsAPI.getAll()
+      .then(setProjects)
+      .catch((err) => {
+        setProjects([]);
+        setMessage({ type: 'error', text: 'Failed to fetch projects. ' + (typeof err === 'object' && err && 'message' in err ? (err as any).message : 'Network error.') });
+      });
   }, []);
 
   const selectedGroup = groups.find((g) => g.id === selectedGroupId);
@@ -83,24 +92,37 @@ export const ModuleDeployPage: React.FC = () => {
     const firstProject = projects.find((p) => p.id === firstProjectId);
     if (!firstProject || !firstProject.branches || firstProject.branches.length === 0) {
       setBranchesLoading(true);
-      projectsAPI.getBranches(firstProjectId).then((branches) => {
-        setProjects((prev) =>
-          prev.map((p) => (p.id === firstProjectId ? { ...p, branches } : p))
-        );
-        setBranchesLoading(false);
-      }).catch(() => setBranchesLoading(false));
+      projectsAPI.getBranches(firstProjectId)
+        .then((branches) => {
+          setProjects((prev) =>
+            prev.map((p) => (p.id === firstProjectId ? { ...p, branches } : p))
+          );
+          setBranchesLoading(false);
+        })
+        .catch((err) => {
+          setBranchesLoading(false);
+          setMessage({ type: 'error', text: 'Failed to fetch branches. ' + (typeof err === 'object' && err && 'message' in err ? (err as any).message : 'Network error.') });
+        });
     }
   }, [selectedGroupId, groups, projects]);
 
   // Fetch history on mount and after new deploy
   const fetchHistory = async () => {
     setHistoryLoading(true);
+    const start = Date.now();
     try {
-      await new Promise(res => setTimeout(res, 3000)); // Artificial delay for loader visibility (reduced to 3s)
       const res = await axios.get("/api/bulk-deployments");
       setHistory(res.data);
+    } catch (err: any) {
+      setMessage({ type: 'error', text: 'Failed to fetch deployment history. ' + (typeof err === 'object' && err && 'message' in err ? err.message : 'Network error.') });
     } finally {
-      setHistoryLoading(false);
+      const elapsed = Date.now() - start;
+      const minTime = 1200;
+      if (elapsed < minTime) {
+        setTimeout(() => setHistoryLoading(false), minTime - elapsed);
+      } else {
+        setHistoryLoading(false);
+      }
     }
   };
   useEffect(() => { fetchHistory(); }, []);
@@ -262,20 +284,21 @@ export const ModuleDeployPage: React.FC = () => {
     setDeployStartTime(new Date());
     lastDeployedBranch.current = bulkDeployBranch;
     try {
-      // 1. Fetch branches for all selected projects
       const branchesResults = await Promise.all(
         selectedGroup.projectIds.map(async (projectId) => {
-          const branches = await projectsAPI.getBranches(projectId);
-          return { projectId, branches };
+          try {
+            const branches = await projectsAPI.getBranches(projectId);
+            return { projectId, branches };
+          } catch (err) {
+            throw new Error('Failed to fetch branches for project ID ' + projectId + '. ' + (typeof err === 'object' && err && 'message' in err ? (err as any).message : 'Network error.'));
+          }
         })
       );
-      // 2. Check if the selected branch exists in each project
       const missing = branchesResults.filter(
         (result) =>
           !result.branches.some((b: any) => b.name === bulkDeployBranch)
       );
       if (missing.length > 0) {
-        // 3. Show error message listing missing projects
         const missingNames = missing
           .map((m) => {
             const p = projects.find((proj) => proj.id === m.projectId);
@@ -289,32 +312,19 @@ export const ModuleDeployPage: React.FC = () => {
         setLoading(false);
         return;
       }
-      // 4. Only trigger pipeline for the latest (active) pipeline of each project
       await Promise.all(
-        selectedGroup.projectIds.map((projectId) => {
-          // Find all pipelines for this project and branch
-          const projectBranchPipelines = allPipelines.filter(p => p.project_id === projectId && p.ref === bulkDeployBranch);
-          if (projectBranchPipelines.length === 0) {
-            // No pipeline exists for this project/branch, allow triggering
-            return projectsAPI.triggerPipeline(projectId, bulkDeployBranch);
+        selectedGroup.projectIds.map(async (projectId) => {
+          try {
+            await projectsAPI.triggerPipeline(projectId, bulkDeployBranch);
+          } catch (err) {
+            throw new Error('Failed to trigger pipeline for project ID ' + projectId + '. ' + (typeof err === 'object' && err && 'message' in err ? (err as any).message : 'Network error.'));
           }
-          // Find the latest pipeline for this project/branch
-          const latestPipeline = projectBranchPipelines.reduce((latest, p) => new Date(p.created_at) > new Date(latest.created_at) ? p : latest, projectBranchPipelines[0]);
-          // Only trigger if the latest pipeline is in a terminal state
-          if (["success", "failed", "canceled"].includes(latestPipeline.status)) {
-            return projectsAPI.triggerPipeline(projectId, bulkDeployBranch);
-          }
-          // Otherwise, skip triggering for this project
-          return Promise.resolve();
         })
       );
-      debugger;
-      // Record in backend
       await axios.post("/api/bulk-deployments", {
         module: selectedGroup.name,
         branch: bulkDeployBranch,
         started: new Date().toISOString(),
-        environments: envStatus,
       });
       fetchHistory();
       setMessage({
@@ -324,7 +334,7 @@ export const ModuleDeployPage: React.FC = () => {
     } catch (err: any) {
       setMessage({
         type: "error",
-        text: err.message || "Failed to trigger module deployment",
+        text: (typeof err === 'object' && err && 'message' in err) ? err.message : "Failed to trigger module deployment. Network error.",
       });
     } finally {
       setLoading(false);
@@ -488,6 +498,7 @@ export const ModuleDeployPage: React.FC = () => {
       setLoading(true);
       const pipeline = await triggerPipeline(Number(projectId), 'release/QA', { ENVIRONMENT: 'QA', ACTION: 'cluster_switch' });
       setAllPipelines(prev => [pipeline, ...prev]);
+      setClusterSwitchPipelines(prev => [pipeline, ...prev]);
       const jobs = await projectsAPI.getPipelineJobs(pipeline.project_id, pipeline.id);
       setPipelineJobs(prev => ({ ...prev, [pipeline.id]: jobs }));
       setRecentlyTriggeredPipelineId(pipeline.id);
@@ -497,6 +508,24 @@ export const ModuleDeployPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGroupEnvAction = async (action: 'cluster' | 'alb') => {
+    const newPipelines: any[] = [];
+    for (const pipeline of allPipelines) {
+      const newPipeline = await projectsAPI.triggerPipeline(pipeline.project_id, pipeline.ref, {
+        ENVIRONMENT: 'QA', // or dynamically determine env if needed
+        ACTION: action === 'cluster' ? 'cluster_switch' : 'change_alb',
+      });
+      newPipelines.push(newPipeline);
+      setAllPipelines(prev => [newPipeline, ...prev]);
+    }
+    // Set jobs for each new pipeline in a for-await-of loop
+    for (const newPipeline of newPipelines) {
+      const jobs = await projectsAPI.getPipelineJobs(newPipeline.project_id, newPipeline.id);
+      setPipelineJobs(prev => ({ ...prev, [newPipeline.id]: jobs }));
+    }
+    setClusterSwitchPipelines(prev => [...newPipelines, ...prev]);
   };
 
   return (
@@ -652,6 +681,45 @@ export const ModuleDeployPage: React.FC = () => {
         </div>
         {/* Separator below header */}
         <div className="border-b border-gray-300 mb-4" />
+        {/* Cluster Switch Group */}
+        {clusterSwitchPipelines.length > 0 && (
+          <div className="mb-8">
+            <div className="text-lg font-bold mb-4">Cluster Switch</div>
+            <div className="space-y-8">
+              <div className="border-2 border-blue-400 rounded-lg p-4 bg-blue-50">
+                <div className="mb-2 flex items-center gap-4 flex-wrap justify-between">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <span className="text-blue-700 font-semibold text-lg">Cluster Switch Pipelines</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {clusterSwitchPipelines.map((pipeline) => (
+                    <div
+                      key={pipeline.id}
+                      className={`border border-gray-200 rounded p-2 flex items-center justify-between bg-gray-50`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-900">{pipeline.project_name}</span>
+                        <StatusBadge status={pipeline.status} />
+                        <span className="text-xs text-gray-500">#{pipeline.iid}</span>
+                      </div>
+                      <div className="flex items-center gap-2 justify-end ml-auto">
+                        <a
+                          href={pipeline.web_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary-600 hover:text-primary-700 text-xs"
+                        >
+                          View Pipeline
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {historyLoading ? (
           <div className="flex justify-center py-8">
             <LoadingSpinner size="md" />
@@ -679,6 +747,20 @@ export const ModuleDeployPage: React.FC = () => {
                     const runningCount = pipelines.filter(p => p.status === 'running').length;
                     const total = pipelines.length;
                     const isReleaseBranch = branch.startsWith('release/');
+                    const activePipelines = pipelines.filter(p => p.status === 'running');
+                    const handleGroupEnvAction = async (action: 'cluster' | 'alb') => {
+                      for (const pipeline of activePipelines) {
+                        await projectsAPI.triggerPipeline(pipeline.project_id, pipeline.ref, {
+                          ENVIRONMENT: 'QA', // or dynamically determine env if needed
+                          ACTION: action === 'cluster' ? 'cluster_switch' : 'change_alb',
+                        });
+                      }
+                      fetchHistory();
+                    };
+                    const allQADeployed = activePipelines.length > 0 && activePipelines.every((p: any) =>
+                      (pipelineJobs[p.id] || []).some((j: any) => j.status === 'success' && j.name === 'deploy_to_qa') &&
+                      !(pipelineJobs[p.id] || []).some((j: any) => j.status === 'manual' && j.name === 'deploy_to_qa')
+                    );
                     return (
                       <div key={key} className="border-2 border-blue-400 rounded-lg p-4 bg-blue-50">
                         <div className="mb-2 flex items-center gap-4 flex-wrap justify-between">
@@ -688,89 +770,7 @@ export const ModuleDeployPage: React.FC = () => {
                             <span className="text-xs text-gray-700">{successCount} Success, {failedCount} Failed, {runningCount} Running, {total} Total</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            {/* Group-level Manual Action Buttons */}
-                            {(() => {
-                              // Only consider the latest (active) pipeline for each project for header action button counts
-                              const latestPipelineIdByProjectId: { [projectId: number]: number } = {};
-                              pipelines.forEach((pipeline) => {
-                                const existing = latestPipelineIdByProjectId[pipeline.project_id];
-                                if (!existing || new Date(pipeline.created_at) > new Date(pipelines.find(p => p.id === existing)?.created_at || 0)) {
-                                  latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
-                                }
-                              });
-                              const activePipelines = pipelines.filter(p => latestPipelineIdByProjectId[p.project_id] === p.id);
-                              // Collect all manual jobs by name across all active pipelines in this group/branch
-                              const manualJobsByName: Record<string, number> = {};
-                              const successManualJobsByName: Record<string, number> = {};
-                              activePipelines.forEach(pipeline => {
-                                (pipelineJobs[pipeline.id] || []).forEach(job => {
-                                  if (job.status === 'manual') {
-                                    manualJobsByName[job.name] = (manualJobsByName[job.name] || 0) + 1;
-                                  }
-                                  if (job.status === 'success' && manualJobLabel(job.name, true)) {
-                                    successManualJobsByName[job.name] = (successManualJobsByName[job.name] || 0) + 1;
-                                  }
-                                });
-                              });
-                              // Check if ALL active pipelines have passed each stage
-                              const allQADeployed = activePipelines.length > 0 && activePipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_qa") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
-                              );
-                              const allStageDeployed = activePipelines.length > 0 && activePipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_staging") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_staging")
-                              );
-                              const allProdDeployed = activePipelines.length > 0 && activePipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_production") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_production")
-                              );
-                              return (
-                                <>
-                                  {/* Success (done) buttons first */}
-                                  {Object.entries(successManualJobsByName).reverse().filter(([jobName]) => isDeployAction(jobName)).map(([jobName, count]) => (
-                                    <button
-                                      key={jobName + '-success'}
-                                      disabled
-                                      className="ml-2 px-2 py-1 bg-green-500 text-xs text-white rounded font-semibold opacity-80 cursor-not-allowed"
-                                    >
-                                      {manualJobLabel(jobName, true)}{count > 1 ? ` (${count})` : ''}
-                                    </button>
-                                  ))}
-                                  {/* Pending manual action buttons after */}
-                                  {Object.entries(manualJobsByName).reverse().filter(([jobName]) => isDeployAction(jobName)).map(([jobName, count]) => {
-                                    // groupBranchKey is unique for each group/date/branch
-                                    const groupBranchKey = `${date}__${groupName}__${branch}`;
-                                    const isProcessing = playingGroupJob[groupBranchKey] === jobName;
-                                    // Check if any job for this action is running in active pipelines
-                                    const isRunning = activePipelines.some(pipeline => (pipelineJobs[pipeline.id] || []).some(j => j.name === jobName && j.status === 'running'));
-                                    // Only enable Deploy to Stage/Production if allQADeployed is true
-                                    let shouldDisable = isProcessing;
-                                    if (jobName === 'deploy_to_staging') {
-                                      shouldDisable = shouldDisable || !allQADeployed;
-                                    }
-                                    if (jobName === 'deploy_to_production') {
-                                      const allQAAndStageDeployed = activePipelines.every(p =>
-                                        !pipelineJobs[p.id]?.some(j => j.status === 'manual' && (j.name === 'deploy_to_qa' || j.name === 'deploy_to_staging'))
-                                      );
-                                      shouldDisable = shouldDisable || !allQAAndStageDeployed;
-                                    }
-                                    return (
-                                      <button
-                                        key={jobName}
-                                        onClick={() => handlePlayGroupManualJob(activePipelines, jobName, groupBranchKey)}
-                                        disabled={shouldDisable}
-                                        className={`ml-2 px-2 py-1 text-xs rounded font-semibold disabled:opacity-60 disabled:cursor-not-allowed ${(isProcessing || isRunning) ? 'bg-blue-400 text-white' : 'bg-yellow-500 text-black hover:bg-yellow-600'}`}
-                                      >
-                                        {(isProcessing || isRunning)
-                                          ? `Deploying to ${jobName === 'deploy_to_qa' ? 'QA' : jobName === 'deploy_to_staging' ? 'Staging' : jobName === 'deploy_to_production' ? 'Production' : ''}`
-                                          : manualJobLabel(jobName, false) + (count > 1 ? ` (${count})` : '')}
-                                      </button>
-                                    );
-                                  })}
-                                </>
-                              );
-                            })()}
+                            {/* Group-level Manual Action Buttons removed as requested. */}
                           </div>
                         </div>
                         <div className="space-y-2">
@@ -815,63 +815,83 @@ export const ModuleDeployPage: React.FC = () => {
                            })()}
                            </>
                         </div>
-                        <div className="flex flex-wrap items-center justify-between">
-                          <div className="flex items-center gap-2 mt-2">
-                            {(() => {
-                              // Only consider the latest (active) pipeline for each project
-                              const latestPipelineIdByProjectId: { [projectId: number]: number } = {};
-                              pipelines.forEach((pipeline) => {
+                        <div className="flex items-center justify-between mt-2">
+                          {/* Left: Deploy environment buttons */}
+                          <div className="flex gap-2">
+                            {(['qa', 'staging', 'production'] as const).map((env) => {
+                              const jobName = env === 'qa' ? 'deploy_to_qa' : env === 'staging' ? 'deploy_to_staging' : 'deploy_to_production';
+                              const latestPipelineIdByProjectId: Record<number, number> = {};
+                              pipelines.forEach((pipeline: any) => {
                                 const existing = latestPipelineIdByProjectId[pipeline.project_id];
-                                if (!existing || new Date(pipeline.created_at) > new Date(pipelines.find(p => p.id === existing)?.created_at || 0)) {
+                                if (!existing || new Date(pipeline.created_at) > new Date(pipelines.find((p: any) => p.id === existing)?.created_at || 0)) {
                                   latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
                                 }
                               });
-                              const activePipelines = pipelines.filter(p => latestPipelineIdByProjectId[p.project_id] === p.id);
-                              // Determine the highest environment reached by ANY active pipeline (PROD > STAGE > QA)
-                              const envOrder = ["deploy_to_qa", "deploy_to_staging", "deploy_to_production"];
-                              let maxEnvIndex = 0;
-                              activePipelines.forEach(p => {
-                                envOrder.forEach((env, idx) => {
-                                  if (pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === env) && idx > maxEnvIndex) {
-                                    maxEnvIndex = idx;
-                                  }
-                                });
-                              });
-                              const lastEnvKey = envOrder[maxEnvIndex];
-                              const lastEnv = lastEnvKey === "deploy_to_qa" ? "QA" : lastEnvKey === "deploy_to_staging" ? "STAGE" : "PROD";
-                              // Handler to trigger pipeline for all active projects in the group for the selected environment
-                              const handleGroupEnvAction = async (action: "cluster" | "alb") => {
-                                for (const pipeline of activePipelines) {
-                                  await projectsAPI.triggerPipeline(pipeline.project_id, pipeline.ref, {
-                                    ENVIRONMENT: lastEnv,
-                                    ACTION: action === "cluster" ? "cluster_switch" : "change_alb"
-                                  });
-                                }
-                                fetchHistory();
-                              };
-                              // Determine if ALL active pipelines have deployed to QA (strict)
-                              const allQADeployed = activePipelines.length > 0 && activePipelines.every(p =>
-                                pipelineJobs[p.id]?.some(j => j.status === "success" && j.name === "deploy_to_qa") &&
-                                !pipelineJobs[p.id]?.some(j => j.status === "manual" && j.name === "deploy_to_qa")
-                              );
+                              const activePipelines: any[] = pipelines.filter((p: any) => latestPipelineIdByProjectId[p.project_id] === p.id);
+                              const hasManual = activePipelines.some((p: any) => (pipelineJobs[p.id] || []).some((j: any) => j.name === jobName && j.status === 'manual'));
+                              const isRunning = activePipelines.some((p: any) => (pipelineJobs[p.id] || []).some((j: any) => j.name === jobName && j.status === 'running'));
+                              const isSuccess = activePipelines.length > 0 && activePipelines.every((p: any) => (pipelineJobs[p.id] || []).some((j: any) => j.name === jobName && j.status === 'success'));
+                              let colorClass = '';
+                              if (isSuccess) {
+                                colorClass = 'bg-green-500 text-white';
+                              } else if (hasManual) {
+                                colorClass = 'bg-yellow-400 text-black hover:bg-yellow-500';
+                              } else {
+                                colorClass = 'bg-gray-200 text-gray-500 cursor-not-allowed';
+                              }
                               return (
-                                <>
-                                  <ButtonWithLoader
-                                    className={`bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded text-xs ${!allQADeployed ? "opacity-60 cursor-not-allowed" : ""}`}
-                                    onClick={handleClusterSwitchQA}
-                                    disabled={!allQADeployed}
-                                  >
-                                    Cluster Switching {lastEnv}
-                                  </ButtonWithLoader>
-                                  <ButtonWithLoader
-                                    className={`bg-purple-600 hover:bg-purple-700 text-white font-bold py-1 px-3 rounded text-xs ${!allQADeployed ? "opacity-60 cursor-not-allowed" : ""}`}
-                                    onClick={() => handleGroupEnvAction("alb")}
-                                    disabled={!allQADeployed}
-                                  >
-                                    Change ALB {lastEnv}
-                                  </ButtonWithLoader>
-                                </>
+                                <button
+                                  key={env}
+                                  className={`px-4 py-1 rounded font-bold text-xs transition ${colorClass} ${isRunning ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                  disabled={!hasManual || isRunning || isSuccess}
+                                  onClick={() => {
+                                    if (!hasManual || isRunning || isSuccess) return;
+                                    const groupBranchKey = `${date}__${groupName}__${branch}`;
+                                    handlePlayGroupManualJob(activePipelines, jobName, groupBranchKey);
+                                  }}
+                                >
+                                  {env === 'qa' ? 'QA' : env === 'staging' ? 'STAGING' : 'PRODUCTION'}
+                                </button>
                               );
+                            })}
+                          </div>
+                          {/* Right: Cluster Switching and Change ALB buttons */}
+                          <div className="flex gap-2 ml-auto">
+                            {(() => {
+                              const latestPipelineIdByProjectId: Record<number, number> = {};
+                              pipelines.forEach((pipeline: any) => {
+                                const existing = latestPipelineIdByProjectId[pipeline.project_id];
+                                if (!existing || new Date(pipeline.created_at) > new Date(pipelines.find((p: any) => p.id === existing)?.created_at || 0)) {
+                                  latestPipelineIdByProjectId[pipeline.project_id] = pipeline.id;
+                                }
+                              });
+                              const activePipelines: any[] = pipelines.filter((p: any) => latestPipelineIdByProjectId[p.project_id] === p.id);
+                              const isQAGreen = activePipelines.length > 0 && activePipelines.every((p: any) => (pipelineJobs[p.id] || []).some((j: any) => j.name === 'deploy_to_qa' && j.status === 'success'));
+                              const isStagingGreen = isQAGreen && activePipelines.every((p: any) => (pipelineJobs[p.id] || []).some((j: any) => j.name === 'deploy_to_staging' && j.status === 'success'));
+                              const isProductionGreen = isStagingGreen && activePipelines.every((p: any) => (pipelineJobs[p.id] || []).some((j: any) => j.name === 'deploy_to_production' && j.status === 'success'));
+                              let env = '';
+                              if (isProductionGreen) env = 'PRODUCTION';
+                              else if (isStagingGreen) env = 'STAGING';
+                              else if (isQAGreen) env = 'QA';
+                              const enabled = !!env;
+                              const blueClass = enabled ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed';
+                              const purpleClass = enabled ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed';
+                              return <>
+                                <ButtonWithLoader
+                                  className={`font-bold py-1 px-3 rounded text-xs transition ${blueClass}`}
+                                  onClick={handleClusterSwitchQA}
+                                  disabled={!enabled}
+                                >
+                                  Cluster Switching {env}
+                                </ButtonWithLoader>
+                                <ButtonWithLoader
+                                  className={`font-bold py-1 px-3 rounded text-xs transition ${purpleClass}`}
+                                  onClick={() => handleGroupEnvAction('alb')}
+                                  disabled={!enabled}
+                                >
+                                  Change ALB {env}
+                                </ButtonWithLoader>
+                              </>;
                             })()}
                           </div>
                         </div>
